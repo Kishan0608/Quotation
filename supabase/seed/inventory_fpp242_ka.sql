@@ -1,0 +1,60 @@
+-- "FPP242 KA 2026-9-29.xlsx" (FPP242 KA 8th shipment, SEPTEMBER rates): the user chose to keep the newer
+-- October prices, so existing items are NOT changed; only items not yet in inventory are added, in Excel order.
+with f(ord, item_code, description, weight_kg, unit_price, stock_qty, loading_charges, actual_weight, note) as (values
+(0, $t$P1$t$, $t$457X5.8MM$t$, 56, 243::numeric, 10, 0, $t$5.4-5.5MM$t$, $t$1280MM$t$),
+(1, $t$Q1$t$, $t$508X5.8MM$t$, 72, 303::numeric, 10, 0, $t$5.3-5.5MM$t$, $t$1450MM$t$),
+(2, $t$T1$t$, $t$610X6.35MM$t$, 96, 463::numeric, 10, 0, $t$5.8-6.0MM$t$, $t$1750MM$t$),
+(3, $t$N2$t$, $t$406X6MM$t$, 44, 173::numeric, 10, 11, $t$5.2-5.5MM$t$, $t$1150MM$t$),
+(4, $t$M1$t$, $t$355X5MM$t$, 24, 108::numeric, 10, 6, $t$4.2-4.5MM$t$, $t$1000MM$t$),
+(5, $t$L2$t$, $t$325X5.75MM$t$, 24, 86.5::numeric, 56, 34, $t$5.2-5.5MM$t$, $t$840MM$t$),
+(6, $t$K1$t$, $t$273X4MM$t$, 11, 48::numeric, 34, 10, $t$3.7-3.8MM$t$, $t$700MM$t$),
+(7, $t$K7$t$, $t$273XSCH40$t$, 32, 121::numeric, 81, 65, $t$8.1-8.8MM$t$, $t$Standard$t$),
+(8, $t$K7$t$, $t$273XSCH40$t$, 32, 121::numeric, 19, 0, $t$8.1-8.8MM$t$, $t$Standard$t$),
+(9, $t$J3$t$, $t$219X5.75MM$t$, 10.1, 39.5::numeric, 276, 70, $t$5.2-5.5MM$t$, $t$560MM$t$),
+(10, $t$H2$t$, $t$165X4.75MM$t$, 5, 18.9::numeric, 800, 0, $t$4.5-4.6MM$t$, $t$440MM$t$),
+(11, $t$G1$t$, $t$140X3.5MM$t$, 2.6, 10.2::numeric, 450, 0, $t$3.3-3.5MM$t$, $t$370MM$t$),
+(12, $t$F1$t$, $t$114X3.5MM$t$, 1.65, 6.7::numeric, 1800, 74, $t$3.2-3.3MM$t$, $t$300MM$t$),
+(13, $t$E2$t$, $t$89X3.5MM$t$, 1, 3.9::numeric, 3245, 81.5, $t$3.3-3.5MM$t$, $t$225MM$t$),
+(14, $t$D3$t$, $t$60X4MM$t$, 0.45, 1.8::numeric, 3200, 0, $t$3.4-3.5MM$t$, $t$145MM$t$),
+(15, $t$G4$t$, $t$5"XSCH40$t$, 5.7, 23.5::numeric, 150, 0, $t$5.7-6.0MM$t$, $t$Standard$t$),
+(16, $t$U2$t$, $t$76X4MM$t$, 0.78, 3.5::numeric, 1466, 29, $t$3.7-3.9MM$t$, $t$190MM$t$),
+(17, $t$B3$t$, $t$42X4MM$t$, 0.21, 1.03::numeric, 5000, 26, $t$3.2-3.3MM$t$, $t$95MM$t$),
+(18, $t$B1$t$, $t$42X2.5MM$t$, 0.14, 0.82::numeric, 5000, 18, $t$2.4-2.5MM$t$, $t$95MM$t$),
+(19, $t$Z11$t$, $t$2"X11/2"XSCH40 TEE$t$, 0.75, 5::numeric, 200, 4, $t$4.3-4.5MM / 3.5-3.7MM$t$, null),
+(20, $t$Z19$t$, $t$21/2"X2"XSCH40 TEE$t$, 1.45, 8::numeric, 50, 2, $t$4.8-5.0MM / 4.0-4.3MM$t$, null),
+(21, $t$Z23$t$, $t$3"X11/4"XSCH40 TEE$t$, 2, 10::numeric, 100, 5, $t$5.5-6.0MM / 3.8-4.0MM$t$, null),
+(22, $t$Z52$t$, $t$8"X6"XSCH40 TEE$t$, 14.3, 72::numeric, 20, 7, $t$7.5-7.7MM / 6.5-6.7MM$t$, null),
+(23, $t$N1$t$, $t$406X5MM$t$, 35, 148::numeric, 20, 18, $t$4.2-4.5MM$t$, $t$1150MM$t$),
+(24, $t$N2$t$, $t$406X6MM$t$, 44, 173::numeric, 5, 6, $t$5.2-5.5MM$t$, $t$1150MM$t$),
+(25, $t$M2$t$, $t$355X6MM$t$, 31.5, 124::numeric, 61, 48, $t$5.2-5.5MM$t$, $t$1000MM$t$),
+(26, $t$L2$t$, $t$325X5.75MM$t$, 24, 86.5::numeric, 9, 5.5, $t$5.2-5.5MM$t$, $t$840MM$t$),
+(27, $t$K2$t$, $t$273X5.75MM$t$, 16, 62::numeric, 170, 68, $t$5.2-5.5MM$t$, $t$700MM$t$),
+(28, $t$J7$t$, $t$219XSCH40$t$, 18, 64::numeric, 22, 10, $t$7.2-7.7MM$t$, $t$Standard$t$),
+(29, null, $t$325X5MM$t$, 20.95, 81::numeric, 98, 0, $t$4.9-5.0MM$t$, $t$830MM$t$),
+(30, $t$J7$t$, $t$219XSCH40$t$, 18, 64::numeric, 89, 0, $t$7.2-7.7MM$t$, $t$Standard$t$),
+(31, $t$J7$t$, $t$219XSCH40$t$, 18, 63::numeric, 9, 0, $t$7.2-7.7MM$t$, $t$Standard$t$),
+(32, $t$H4$t$, $t$6"XSCH40$t$, 9, 35::numeric, 200, 0, $t$6.2-6.7MM$t$, $t$Standard$t$),
+(33, $t$J1$t$, $t$219X4MM$t$, 6.8, 29::numeric, 154, 26, $t$3.5-3.6MM$t$, $t$560MM$t$),
+(34, $t$E3$t$, $t$89X4.25MM$t$, 1.15, 4.55::numeric, 900, 25, $t$3.7-3.9MM$t$, $t$225MM$t$),
+(35, $t$G2$t$, $t$140X5MM$t$, 3.4, 13::numeric, 450, 36, $t$4.3-4.5MM$t$, $t$370MM$t$),
+(36, $t$H1$t$, $t$165X3.75MM$t$, 4, 14.3::numeric, 559, 0.7, $t$3.5-3.6MM$t$, $t$440MM$t$),
+(37, $t$E4$t$, $t$89XSCH40(OIL PIPE)$t$, 2, 7.6::numeric, 1000, 0, $t$5.2-5.7MM$t$, $t$Standard$t$),
+(38, $t$F5$t$, $t$114XSCH40(OIL PIPE)$t$, 3.2, 11.3::numeric, 884, 0.2, $t$5.0-5.7MM$t$, $t$Standard$t$),
+(39, $t$F5$t$, $t$114XSCH40(OIL PIPE)$t$, 3.2, 11.5::numeric, 732, 0, $t$5.0-5.7MM$t$, $t$Standard$t$),
+(40, $t$E3$t$, $t$89X4.25MM$t$, 1.15, 4.55::numeric, 600, 17, $t$3.9-4.0MM$t$, $t$225MM$t$),
+(41, $t$U2$t$, $t$76X4MM$t$, 0.78, 3.5::numeric, 1494, 29, $t$3.7-3.9MM$t$, $t$190MM$t$),
+(42, $t$C1$t$, $t$48X2.5MM$t$, 0.2, 1::numeric, 5100, 26, $t$2.5-2.6MM$t$, $t$115MM$t$),
+(43, $t$A4$t$, $t$1"XSCH40$t$, 0.18, 0.95::numeric, 2100, 0, $t$3.0-3.5MM$t$, $t$Standard$t$)),
+fk as (select f.*, upper(regexp_replace(coalesce(item_code, ''), '[[:space:]()（）]', '', 'g')) || '|' || upper(regexp_replace(description, '[[:space:]()（）]', '', 'g')) as key from f),
+ik as (select i.id, i.unit_price, upper(regexp_replace(coalesce(i.item_code, ''), '[[:space:]()（）]', '', 'g')) || '|' || upper(regexp_replace(i.description, '[[:space:]()（）]', '', 'g')) as key from public.inventory_items i),
+lp as (select distinct on (key) key, unit_price from fk where unit_price is not null order by key, ord desc),
+nw as (select distinct on (fk.key) fk.* from fk where not exists (select 1 from ik where ik.key = fk.key) order by fk.key, fk.ord),
+ins as (
+  insert into public.inventory_items (item_code, description, weight_kg, unit_price, stock_qty, loading_charges, actual_weight, note, created_at)
+  select nw.item_code, nw.description, nw.weight_kg, coalesce(lp.unit_price, nw.unit_price), nw.stock_qty, nw.loading_charges, nw.actual_weight, nw.note,
+         now() + make_interval(secs => nw.ord / 1000.0)
+  from nw left join lp on lp.key = nw.key
+  order by nw.ord
+  returning id
+)
+select (select count(*) from ins) as items_added;

@@ -1,0 +1,20 @@
+-- 18 rows from "FPP245 PRAVEEN 2026-10-1.xlsx" (FPP245 PRAVEEN 4th shipment, container TIIU2630493), in Excel order.
+insert into public.inventory_items (item_code, description, weight_kg, unit_price, stock_qty, loading_charges, actual_weight, note, created_at) values
+($t$B3$t$, $t$42X4MM$t$, 0.21, 1.02, 5000, 26, $t$3.2-3.3MM$t$, $t$95MM$t$, now() + interval '0 milliseconds'),
+($t$C3$t$, $t$48X4MM$t$, 0.28, 1.13, 5100, 0, $t$3.2-3.3MM$t$, $t$115MM$t$, now() + interval '1 milliseconds'),
+($t$D3$t$, $t$60X4MM$t$, 0.45, 1.8, 4320, 0, $t$3.4-3.5MM$t$, $t$145MM$t$, now() + interval '2 milliseconds'),
+($t$C4$t$, $t$11/2"XSCH40$t$, 0.3, 1.58, 1920, 0.6, $t$3.2-3.5MM$t$, $t$Standard$t$, now() + interval '3 milliseconds'),
+($t$B3$t$, $t$42X4MM$t$, 0.21, 1.02, 2600, 0, $t$3.2-3.3MM$t$, $t$95MM$t$, now() + interval '4 milliseconds'),
+($t$E3$t$, $t$89X4.25MM$t$, 1.15, 4.55, 4000, 0, $t$3.7-3.9MM$t$, $t$225MM$t$, now() + interval '5 milliseconds'),
+($t$F1$t$, $t$114X3.5MM$t$, 1.65, 6.7, 2500, 100, $t$3.2-3.3MM$t$, $t$300MM$t$, now() + interval '6 milliseconds'),
+($t$H1$t$, $t$165X3.75MM$t$, 4, 14.3, 200, 0, $t$3.5-3.6MM$t$, $t$440MM$t$, now() + interval '7 milliseconds'),
+($t$J1$t$, $t$219X4MM$t$, 6.8, 29, 114, 19, $t$3.5-3.6MM$t$, $t$560MM$t$, now() + interval '8 milliseconds'),
+($t$J1$t$, $t$219X4MM$t$, 7, 30, 50, 9, $t$3.8-4.0MM$t$, $t$560MM$t$, now() + interval '9 milliseconds'),
+($t$K1$t$, $t$273X4MM$t$, 11, 48, 104, 29, $t$3.7-3.8MM$t$, $t$700MM$t$, now() + interval '10 milliseconds'),
+($t$L2$t$, $t$325X5.75MM$t$, 24, 86.5, 46, 25, $t$5.2-5.5MM$t$, $t$840MM$t$, now() + interval '11 milliseconds'),
+($t$J7$t$, $t$219XSCH40$t$, 18, 64, 200, 90, $t$7.1-7.7MM$t$, $t$Standard$t$, now() + interval '12 milliseconds'),
+($t$K7$t$, $t$273XSCH40$t$, 32, 121, 70, 55, $t$8.1-9.0MM$t$, $t$Standard$t$, now() + interval '13 milliseconds'),
+($t$F5$t$, $t$114XSCH40(OIL PIPE)$t$, 3.2, 11.3, 250, 0, $t$5.0-5.7MM$t$, $t$Standard$t$, now() + interval '14 milliseconds'),
+($t$E4$t$, $t$89XSCH40(OIL PIPE)$t$, 2, 7.6, 500, 0, $t$5.2-5.7MM$t$, $t$Standard$t$, now() + interval '15 milliseconds'),
+($t$G4$t$, $t$5"XSCH40$t$, 5.7, 23.5, 150, 21, $t$5.8-6.2MM$t$, $t$Standard$t$, now() + interval '16 milliseconds'),
+($t$H4$t$, $t$6"XSCH40$t$, 8.8, 34.5, 100, 22, $t$6.2-6.7MM$t$, $t$Standard$t$, now() + interval '17 milliseconds');
