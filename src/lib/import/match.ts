@@ -28,6 +28,8 @@ export type ImportRow = {
   length?: string;
   /** The customer's own note ("B CLASS", "galvanised", "with marking"). */
   note?: string;
+  /** The AI reader's reason for its verdict (lines read by the AI only). */
+  why?: string;
 };
 
 /** A note that is really a length (the inventory keeps lengths in its note): "440MM", "6MTRS", "Standard". */
@@ -295,7 +297,7 @@ const LATER_SCHEDULE = /SCH(100|120|140|160|5S|10S|40S|80S|10|20|30|40|60|80|XXS
  * The pipe size a normalised name starts with: an outside diameter and wall ("76X3MM") or inches
  * with a wall in mm or a schedule ("21/2"X4MM", "10"X5.75/6MM", "4"XSCH40").
  */
-function pipeSize(n: string): PipeSize | null {
+export function pipeSize(n: string): PipeSize | null {
   const mm = n.match(/^(\d+(?:\.\d+)?)X(\d+(?:\.\d+)?)(?:\/\d+(?:\.\d+)?)?(?:MM)?(?![\d"])/);
   if (mm && Number(mm[1]) >= 10) {
     const od = Number(mm[1]);

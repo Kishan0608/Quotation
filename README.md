@@ -43,6 +43,8 @@ npm run dev                    # http://localhost:3000
 
 Production: `npm run build && npm start`. On Vercel or any Node host, set the same three environment variables. Use an `https://` `SITE_URL`.
 
+*Optional* AI reader for **Quotation → Import items**: set `GEMINI_API_KEY` (Google Gemini, model `gemini-3.5-flash-lite`). Pasted text, Excel, PDF and photos are then read by the AI and matched to the inventory; without the key (or if the AI fails) the standard reader is used.
+
 > Only the **publishable/anon** key is needed. Never put the `service_role`/secret key in this app.
 
 ## 4. First steps in the app

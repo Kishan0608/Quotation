@@ -8,6 +8,7 @@
     "start": "next start",
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
+    "test": "tsx --test \"src/**/*.test.ts\"",
     "seed:generate": "tsx scripts/generate-seed.ts"
   },
   "dependencies": {

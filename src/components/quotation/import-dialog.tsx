@@ -30,7 +30,7 @@ export type ImportedLine = {
   check?: string;
 };
 
-type Result = { ocr: boolean; rows: ImportRow[]; text: string; note: string | null };
+type Result = { ocr: boolean; ai: boolean; rows: ImportRow[]; text: string; note: string | null };
 
 /** What the user decided for one line; the fields are kept as typed. */
 type RowState = {
@@ -52,6 +52,8 @@ type RowState = {
 };
 
 const itemLabel = (i: PickerItem) => [i.description, i.note ? `(${i.note})` : ""].filter(Boolean).join(" ");
+/** The AI reader's reason, added to a red line's message. */
+const aiWhy = (row: ImportRow) => (row.why ? ` ${row.why}` : "");
 
 function itemProblem(row: ImportRow, item: PickerItem): string | null {
   const top = row.matches[0]?.score ?? 0;
@@ -60,8 +62,8 @@ function itemProblem(row: ImportRow, item: PickerItem): string | null {
     const list = tied.map((i) => `${i.description}${i.note ? ` (${i.note})` : ""} · ${i.unit_price != null ? `RMB ${fmtMoney(i.unit_price)}` : "no price"}`).join(" or ");
     return `${tied.length} items in your inventory match “${row.text}”: ${list}. Pick the right one.`;
   }
-  if (row.issues.includes("size")) return `Size differs: the file says “${row.text}”, the inventory has “${item.description}”.`;
-  if (row.issues.includes("fuzzy")) return `Name differs: the file says “${row.text}”, the inventory has “${itemLabel(item)}”.`;
+  if (row.issues.includes("size")) return `Size differs: the file says “${row.text}”, the inventory has “${item.description}”.${aiWhy(row)}`;
+  if (row.issues.includes("fuzzy")) return `Name differs: the file says “${row.text}”, the inventory has “${itemLabel(item)}”.${aiWhy(row)}`;
   return null;
 }
 
@@ -150,7 +152,7 @@ export function ImportDialog({ open, onClose, onAdd, priceOf }: Props) {
       const res = await fetch("/api/import/items", { method: "POST", body: form });
       const json = (await res.json().catch(() => ({}))) as Partial<Result> & { error?: string };
       if (!res.ok || !json.rows) throw new Error(json.error ?? "Could not read this file.");
-      setResult({ ocr: Boolean(json.ocr), rows: json.rows, text: json.text ?? "", note: json.note ?? null });
+      setResult({ ocr: Boolean(json.ocr), ai: Boolean(json.ai), rows: json.rows, text: json.text ?? "", note: json.note ?? null });
       setStates(
         json.rows.map((r) => {
           // Another size is another item: such a line comes in under its own name (as a new
@@ -212,12 +214,14 @@ export function ImportDialog({ open, onClose, onAdd, priceOf }: Props) {
       const closest = row.matches[0]?.item;
       const otherType = closest && row.length && closest.note && /CENTRIC/i.test(row.length) && /CENTRIC/i.test(closest.note) && row.length.toUpperCase() !== closest.note.toUpperCase();
       const notFound = !closest
-        ? "Not in your inventory: enter its price, or pick an item."
+        ? row.why
+          ? `Not in your inventory: ${row.why} Enter its price, or pick an item.`
+          : "Not in your inventory: enter its price, or pick an item."
         : otherType
           ? `Not in your inventory as ${row.length!.toUpperCase()}: you have ${closest.description} only as ${closest.note!.toUpperCase()}. Enter its price, or pick that item if it will do.`
           : row.issues.includes("size")
-          ? `Not in your inventory as “${row.text}” (closest: ${itemLabel(closest)}, another size). Enter its price, or pick an item.`
-          : `Not in your inventory. Enter its price, or pick an item (similar: ${itemLabel(closest)}).`;
+          ? `Not in your inventory as “${row.text}” (closest: ${itemLabel(closest)}${row.why ? "" : ", another size"}).${aiWhy(row)} Enter its price, or pick an item.`
+          : `Not in your inventory.${aiWhy(row)} Enter its price, or pick an item (similar: ${itemLabel(closest)}).`;
       const problems = [
         item ? (s.itemOk ? null : itemProblem(row, item)) : price == null ? notFound : null,
         qty ? (s.qtyOk ? null : row.issues.includes("qty-unclear") ? "The quantity was hard to read: check it." : null) : "Enter the quantity.",
@@ -386,7 +390,7 @@ export function ImportDialog({ open, onClose, onAdd, priceOf }: Props) {
             <div className="min-w-0">
               <p className="truncate text-sm font-semibold text-slate-800">{file?.name}</p>
               <p className="text-xs text-slate-500">
-                {counts!.total} line{counts!.total === 1 ? "" : "s"} found{result.ocr ? " · read with OCR" : ""}
+                {counts!.total} line{counts!.total === 1 ? "" : "s"} found{result.ai ? " · read with AI" : result.ocr ? " · read with OCR" : ""}
               </p>
             </div>
             <div className="ml-auto flex flex-wrap items-center gap-2">

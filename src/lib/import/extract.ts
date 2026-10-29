@@ -42,7 +42,7 @@ function splitCsv(line: string) {
   return out;
 }
 
-async function excelRows(buf: Buffer) {
+export async function excelRows(buf: Buffer) {
   const mod = (await import("exceljs")) as unknown as typeof import("exceljs") & { default?: typeof import("exceljs") };
   const ExcelJS = mod.default ?? mod;
   const wb = new ExcelJS.Workbook();
