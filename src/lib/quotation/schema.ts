@@ -93,6 +93,8 @@ export const quoteHeaderSchema = z
 
 export const quoteLineSchema = z.object({
   sheet: z.number().int().min(0).max(MAX_SHEETS - 1),
+  /** Row on its sheet, empty rows included (lines open again in the same rows). */
+  row: z.number().int().min(0).max(9999).optional(),
   inventory_item_id: z.preprocess((v) => (v === "" ? null : v), z.uuid().nullable()),
   item_code: optText(40),
   description: reqText(300, "Description"),
@@ -104,7 +106,6 @@ export const quoteLineSchema = z.object({
   price_overridden: z.boolean(),
   remarks: optText(300),
   actual_weight: optText(100),
-  loading_charges: reqNum(0, 100_000_000_000, 0),
   extra: z.record(z.string().regex(/^[a-z0-9]{1,24}$/i), z.string().max(300, "A cell can hold at most 300 characters")),
   fmt: z
     .record(z.string().regex(/^(x:[a-z0-9]{1,24}|[a-z_]{2,20})$/i), cellFmtSchema)

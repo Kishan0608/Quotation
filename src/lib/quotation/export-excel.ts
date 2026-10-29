@@ -314,7 +314,6 @@ export async function buildQuotationWorkbook(
     const uwCol = letterOf("unit_weight_kg");
     const priceCol = letterOf("unit_price");
     const amountColL = letterOf("amount");
-    const loadCol = letterOf("loading_charges");
     const ref = (col: string | null, row: number, value: number) =>
       col ? `${col}${row}` : String(value);
     const firstItemRow = r;
@@ -341,13 +340,9 @@ export async function buildQuotationWorkbook(
             };
             cell.numFmt = "#,##0.00";
             break;
-          case "loading":
-            cell.value = line.loading_charges ?? 0;
-            cell.numFmt = "#,##0.00";
-            break;
-          case "net": // Final Total = Total Amount + Loading Charges
+          case "net": // Final Total = Total Amount
             cell.value = {
-              formula: `${ref(amountColL, r, lineAmount(line))}+${ref(loadCol, r, line.loading_charges ?? 0)}`,
+              formula: ref(amountColL, r, lineAmount(line)),
               result: lineNet(line),
             };
             cell.numFmt = "#,##0.00";
@@ -405,13 +400,8 @@ export async function buildQuotationWorkbook(
         cell.value = { formula: sum(letter), result: sheetTotals.totalWeight };
         cell.numFmt = "#,##0.000";
       }
-      if (c.kind === "amount" || c.kind === "loading" || c.kind === "net") {
-        const result =
-          c.kind === "amount"
-            ? sheetTotals.grossAmount
-            : c.kind === "loading"
-              ? sheetTotals.totalLoading
-              : sheetTotals.baseSubtotal;
+      if (c.kind === "amount" || c.kind === "net") {
+        const result = c.kind === "amount" ? sheetTotals.grossAmount : sheetTotals.baseSubtotal;
         cell.value = { formula: sum(letter), result };
         cell.numFmt = "#,##0.00";
       }

@@ -30,7 +30,7 @@ export type QuoteHeader = {
 };
 
 /** Standard sheet columns, in order. */
-export const STANDARD_COLUMNS = ["idx", "description", "unit_weight_kg", "actual_weight", "unit_price", "qty", "total_weight", "amount", "remarks", "loading_charges", "net"] as const;
+export const STANDARD_COLUMNS = ["idx", "description", "unit_weight_kg", "actual_weight", "unit_price", "qty", "total_weight", "amount", "remarks", "net"] as const;
 export type StandardColumn = (typeof STANDARD_COLUMNS)[number];
 
 /** A change to the sheet's columns (extra columns, deleted columns, renamed titles). */
@@ -40,7 +40,7 @@ export type ColumnLayoutPatch = Partial<Pick<QuoteHeader, "extra_columns" | "hid
 export type ExtraColumn = { key: string; name: string; after?: StandardColumn };
 
 /** Standard sheet columns that can be deleted (hidden) per quotation. No., Items and Final Total always stay. */
-export const HIDEABLE_COLUMNS = ["unit_weight_kg", "actual_weight", "unit_price", "qty", "total_weight", "amount", "remarks", "loading_charges"] as const;
+export const HIDEABLE_COLUMNS = ["unit_weight_kg", "actual_weight", "unit_price", "qty", "total_weight", "amount", "remarks"] as const;
 export type HideableColumn = (typeof HIDEABLE_COLUMNS)[number];
 
 export type AdjustmentKind = "discount" | "charge" | "tax";
@@ -73,12 +73,15 @@ export type QuoteLine = {
   remarks: string;
   /** As written by the supplier, e.g. "5.4-5.6MM". */
   actual_weight: string;
-  /** For the whole line; Final Total = Total Amount + loading charges. */
-  loading_charges: number | null;
   /** Values of the extra columns, by column key. */
   extra: Record<string, string>;
   /** Cell formatting (Home ribbon), by column id ("qty", "x:<key>", ...). */
   fmt: Record<string, CellFmt>;
+  /**
+   * Why this line needs a look, set by Import (e.g. "Not in your inventory"). The row shows red on
+   * the sheet until it is edited or marked as checked; it is not saved with the quotation.
+   */
+  check?: string;
 };
 
 /** 1 = thin, 2 = thick. */
@@ -112,10 +115,9 @@ export type CellFmt = {
 export type QuoteTotals = {
   totalQty: number;
   totalWeight: number;
-  /** Sum of Total Amount (qty x price) and of the loading charges. */
+  /** Sum of Total Amount (qty x price). */
   grossAmount: number;
-  totalLoading: number;
-  /** Sum of the lines' Final Total (= gross amount + loading charges), in RMB. */
+  /** Sum of the lines' Final Total (= Total Amount), in RMB. */
   baseSubtotal: number;
   /** RMB -> quotation currency (1 when the quotation is in RMB). */
   exchangeRate: number;

@@ -9,14 +9,19 @@ const escapeLike = (s: string) => s.replace(/[\\%_]/g, (c) => `\\${c}`);
 /** Wraps a value in PostgREST double quotes so commas, brackets and quotes in user input stay literal. */
 const quoteValue = (s: string) => `"${s.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
 
-/** Every search word must appear (AND) in the item no., the item name or the note (OR), ignoring case. */
+/** Every search word must appear (AND) in the item name or the note (OR), ignoring case. */
 export function applyTextSearch<Q extends { or: (filters: string) => Q }>(query: Q, text: string) {
   let q = query;
   for (const term of text.split(/\s+/).filter(Boolean).slice(0, 6)) {
     const pattern = quoteValue(`%${escapeLike(term.slice(0, 50))}%`);
-    q = q.or(`item_code.ilike.${pattern},description.ilike.${pattern},note.ilike.${pattern}`);
+    q = q.or(`description.ilike.${pattern},note.ilike.${pattern}`);
   }
   return q;
+}
+
+/** Item names starting with one of `prefixes` ("33X2.5MM"), ignoring case. */
+export function applyPrefixSearch<Q extends { or: (filters: string) => Q }>(query: Q, prefixes: string[]) {
+  return query.or(prefixes.map((p) => `description.ilike.${quoteValue(`${escapeLike(p.slice(0, 50))}%`)}`).join(","));
 }
 
 export async function listInventory(supabase: Client, f: InventoryFilters) {

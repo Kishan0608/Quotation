@@ -22,10 +22,10 @@ export async function GET(request: NextRequest) {
   wb.created = new Date();
   const ws = wb.addWorksheet("Inventory", { views: [{ state: "frozen", ySplit: 2 }] });
 
-  // Same columns as the supplier loading plan.
+  // The supplier loading plan's columns (without item numbers and loading charges).
   const headers = [
-    ["ITEMS NO.", 11], ["ITEMS", 40], ["WT IN KGS", 11], [`${currency}/PCS`, 12], ["QTY", 10],
-    ["TOTAL KG", 12], ["AMOUNT", 14], ["LOADING CHARGES", 13], ["ACTUAL WEIGHT", 22], ["NOTE / LENGTH", 22],
+    ["ITEMS", 40], ["WT IN KGS", 11], [`${currency}/PCS`, 12], ["QTY", 10],
+    ["TOTAL KG", 12], ["AMOUNT", 14], ["ACTUAL WEIGHT", 22], ["NOTE / LENGTH", 22],
   ] as const;
   ws.columns = headers.map(([, width]) => ({ width }));
 
@@ -50,34 +50,30 @@ export async function GET(request: NextRequest) {
     const n = idx + 3;
     const row = ws.getRow(n);
     row.values = [
-      r.item_code, r.description, r.weight_kg, r.unit_price, r.stock_qty,
-      { formula: `C${n}*E${n}`, result: Number(r.total_weight_kg) }, // TOTAL KG = WT x QTY
-      { formula: `D${n}*E${n}`, result: Number(r.total_amount) }, // AMOUNT = PRICE x QTY
-      Number(r.loading_charges),
+      r.description, r.weight_kg, r.unit_price, r.stock_qty,
+      { formula: `B${n}*D${n}`, result: Number(r.total_weight_kg) }, // TOTAL KG = WT x QTY
+      { formula: `C${n}*D${n}`, result: Number(r.total_amount) }, // AMOUNT = PRICE x QTY
       r.actual_weight,
       r.note,
     ];
-    row.getCell(3).numFmt = "0.000";
-    row.getCell(4).numFmt = "#,##0.00";
-    row.getCell(5).numFmt = "#,##0";
-    row.getCell(6).numFmt = "#,##0.000";
-    row.getCell(7).numFmt = "#,##0.00";
-    row.getCell(8).numFmt = "#,##0.00";
+    row.getCell(2).numFmt = "0.000";
+    row.getCell(3).numFmt = "#,##0.00";
+    row.getCell(4).numFmt = "#,##0";
+    row.getCell(5).numFmt = "#,##0.000";
+    row.getCell(6).numFmt = "#,##0.00";
   });
 
   const last = rows.length + 2;
   const totals = ws.getRow(last + 1);
-  totals.getCell(2).value = "TOTAL";
+  totals.getCell(1).value = "TOTAL";
   if (rows.length) {
-    totals.getCell(5).value = { formula: `SUM(E3:E${last})`, result: rows.reduce((s, r) => s + Number(r.stock_qty), 0) };
-    totals.getCell(6).value = { formula: `SUM(F3:F${last})`, result: rows.reduce((s, r) => s + Number(r.total_weight_kg), 0) };
-    totals.getCell(7).value = { formula: `SUM(G3:G${last})`, result: rows.reduce((s, r) => s + Number(r.total_amount), 0) };
-    totals.getCell(8).value = { formula: `SUM(H3:H${last})`, result: rows.reduce((s, r) => s + Number(r.loading_charges), 0) };
+    totals.getCell(4).value = { formula: `SUM(D3:D${last})`, result: rows.reduce((s, r) => s + Number(r.stock_qty), 0) };
+    totals.getCell(5).value = { formula: `SUM(E3:E${last})`, result: rows.reduce((s, r) => s + Number(r.total_weight_kg), 0) };
+    totals.getCell(6).value = { formula: `SUM(F3:F${last})`, result: rows.reduce((s, r) => s + Number(r.total_amount), 0) };
   }
   totals.font = { bold: true };
-  totals.getCell(6).numFmt = "#,##0.000";
-  totals.getCell(7).numFmt = "#,##0.00";
-  totals.getCell(8).numFmt = "#,##0.00";
+  totals.getCell(5).numFmt = "#,##0.000";
+  totals.getCell(6).numFmt = "#,##0.00";
   ws.autoFilter = { from: { row: 2, column: 1 }, to: { row: 2, column: headers.length } };
 
   const buffer = await wb.xlsx.writeBuffer();

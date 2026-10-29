@@ -20,7 +20,6 @@ export function blankLine(sheet = 0): QuoteLine {
     price_overridden: false,
     remarks: "",
     actual_weight: "",
-    loading_charges: null,
     extra: {},
     fmt: {},
   };
@@ -32,7 +31,7 @@ export function lineFromItem(item: PickerItem, qty: number, header: QuoteHeader,
     key: newKey(),
     sheet,
     inventory_item_id: item.id,
-    item_code: item.item_code ?? "",
+    item_code: "",
     description: item.description,
     unit: "PCS",
     qty,
@@ -40,10 +39,9 @@ export function lineFromItem(item: PickerItem, qty: number, header: QuoteHeader,
     base_price: item.unit_price == null ? null : Number(item.unit_price),
     unit_price: null,
     price_overridden: false,
-    // Length and actual weight come from inventory; loading charges are entered per quotation.
+    // Length and actual weight come from inventory.
     remarks: item.note ?? "",
     actual_weight: item.actual_weight ?? "",
-    loading_charges: null,
     extra: {},
     fmt: {},
   };

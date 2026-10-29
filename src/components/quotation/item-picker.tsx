@@ -124,7 +124,6 @@ export function ItemPicker({ inQuote, onAdd, disabled }: Props) {
                   <tr key={item.id} className={cn("transition-colors hover:bg-brand-50/50", flash === item.id && "bg-excel-50")}>
                     <td className="px-3 py-2">
                       <div className="flex items-center gap-2">
-                        {item.item_code ? <span className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-[11px] text-slate-600">{item.item_code}</span> : null}
                         <span className="font-medium">{item.description}</span>
                         {count ? <Badge tone="green">In quote ×{fmtQty(count)}</Badge> : null}
                       </div>

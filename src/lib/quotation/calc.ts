@@ -36,8 +36,8 @@ export function repriceLines(lines: QuoteLine[], pricing: PricingInputs, force =
 }
 
 export const lineAmount = (line: Pick<QuoteLine, "qty" | "unit_price">) => round2((line.qty ?? 0) * (line.unit_price ?? 0));
-/** Final Total = Total Amount + loading charges (same as quotation_items.net_amount). */
-export const lineNet = (line: Pick<QuoteLine, "qty" | "unit_price" | "loading_charges">) => round2(lineAmount(line) + (line.loading_charges ?? 0));
+/** Final Total of a line = its Total Amount (quotation_items.amount). */
+export const lineNet = (line: Pick<QuoteLine, "qty" | "unit_price">) => lineAmount(line);
 export const lineWeight = (line: Pick<QuoteLine, "qty" | "unit_weight_kg">) =>
   round3((line.qty ?? 0) * (line.unit_weight_kg ?? 0));
 
@@ -53,17 +53,14 @@ export function computeTotals(lines: QuoteLine[], header: Pick<QuoteHeader, "adj
   let totalQty = 0;
   let totalWeight = 0;
   let grossAmount = 0;
-  let totalLoading = 0;
   let subtotal = 0;
   for (const line of lines) {
     totalQty += line.qty ?? 0;
     totalWeight += lineWeight(line);
     grossAmount += lineAmount(line);
-    totalLoading += line.loading_charges ?? 0;
     subtotal += lineNet(line);
   }
   grossAmount = round2(grossAmount);
-  totalLoading = round2(totalLoading);
   const baseSubtotal = round2(subtotal);
   const exchangeRate = header.exchange_rate > 0 ? header.exchange_rate : 1;
   subtotal = round2(baseSubtotal * exchangeRate);
@@ -82,7 +79,6 @@ export function computeTotals(lines: QuoteLine[], header: Pick<QuoteHeader, "adj
     totalQty: round2(totalQty),
     totalWeight: round3(totalWeight),
     grossAmount,
-    totalLoading,
     baseSubtotal,
     exchangeRate,
     subtotal,
@@ -108,7 +104,6 @@ export function isBlankLine(line: QuoteLine) {
     !line.unit_price &&
     !line.remarks.trim() &&
     !line.actual_weight.trim() &&
-    !line.loading_charges &&
     !Object.values(line.extra ?? {}).some((v) => v.trim())
   );
 }

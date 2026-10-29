@@ -1,0 +1,29 @@
+{
+  "note": "Inventory rows removed on 2026-10-28 when same-name + same-length items were merged into one entry (the user's choice). The kept entries (A5, C11, C11, M6, X81, D16, J7, K2, L32, M4, B3) already had the latest price by shipment date. To undo, run 2026-10-28-merged-duplicates-restore.sql in the Supabase SQL Editor.",
+  "kept_instead": {
+    "1\"XSCH80 Standard": "A5 1.50",
+    "11/2\"XSCH160 Standard": "C11 6.20",
+    "11/4\"XSCH160 Standard": "C11 4.50",
+    "14\"XSTD Standard": "M6 227.00",
+    "16\"X12\"XSTD REDUCER CONCENTRIC": "X81 145.00",
+    "2\"XSCH160 Standard": "D16 9.00",
+    "219XSCH40 Standard": "J7 64.00",
+    "273X5.75MM 700MM": "K2 62.00",
+    "325X5MM 840MM": "L32 82.00",
+    "355X5.75MM Standard": "M4 173.00",
+    "42X4MM 95MM": "B3 1.03"
+  },
+  "removed_rows": [
+    {"id":"17e4d4e2-8dbb-44e7-b5a8-8f93d4a4fbc3","item_code":"A10","description":"1\"XSCH80","note":"Standard","weight_kg":0.19,"unit_price":1.35,"stock_qty":70,"loading_charges":0.5,"actual_weight":"4.0-4.5MM","total_amount":94.5,"total_weight_kg":13.3,"created_at":"2026-10-22T13:04:47.639495+00:00","updated_at":"2026-10-22T13:04:47.525495+00:00"},
+    {"id":"6c604845-6acd-4e8f-a4b7-263fa88bd0cb","item_code":null,"description":"11/2\"XSCH160","note":"Standard","weight_kg":0.65,"unit_price":6.2,"stock_qty":500,"loading_charges":8,"actual_weight":"6.5-7.5MM","total_amount":3100,"total_weight_kg":325,"created_at":"2026-10-22T13:04:47.584495+00:00","updated_at":"2026-10-22T13:04:47.525495+00:00"},
+    {"id":"47ac14d2-22ac-4a17-a701-55cff7d37efe","item_code":null,"description":"11/4\"XSCH160","note":"Standard","weight_kg":0.45,"unit_price":4.5,"stock_qty":48,"loading_charges":0,"actual_weight":"5.7-6.2MM","total_amount":216,"total_weight_kg":21.6,"created_at":"2026-10-22T12:09:40.69761+00:00","updated_at":"2026-10-22T12:09:40.66061+00:00"},
+    {"id":"9084873b-8928-4a14-8695-5368a81d2a17","item_code":null,"description":"14\"XSTD","note":"Standard","weight_kg":64,"unit_price":217,"stock_qty":3,"loading_charges":0,"actual_weight":"8.3-9.0MM","total_amount":651,"total_weight_kg":192,"created_at":"2026-10-22T13:30:11.442199+00:00","updated_at":"2026-10-22T13:30:11.411199+00:00"},
+    {"id":"c1096203-d161-4238-83d8-112be6873640","item_code":null,"description":"16\"X12\"XSTD REDUCER","note":"CONCENTRIC","weight_kg":29.5,"unit_price":125,"stock_qty":10,"loading_charges":0,"actual_weight":"8.9-9.0MM / 9.0-10.0MM","total_amount":1250,"total_weight_kg":295,"created_at":"2026-10-22T13:04:47.611495+00:00","updated_at":"2026-10-22T13:04:47.525495+00:00"},
+    {"id":"30a41fc0-ef87-4bc3-baf3-3c77ada270b4","item_code":null,"description":"2\"XSCH160","note":"Standard","weight_kg":1.43,"unit_price":9.8,"stock_qty":300,"loading_charges":11,"actual_weight":"9.5-12.5MM","total_amount":2940,"total_weight_kg":429,"created_at":"2026-10-22T13:04:47.580495+00:00","updated_at":"2026-10-22T13:04:47.525495+00:00"},
+    {"id":"801b6be0-1f76-494b-bbed-8cd8ca347cea","item_code":null,"description":"219XSCH40","note":"Standard","weight_kg":18,"unit_price":63,"stock_qty":103,"loading_charges":0,"actual_weight":"7.2-7.8MM","total_amount":6489,"total_weight_kg":1854,"created_at":"2026-10-22T13:30:11.420199+00:00","updated_at":"2026-10-22T13:30:11.411199+00:00"},
+    {"id":"b5f99136-322a-43c2-8532-576a61383080","item_code":"K25","description":"273X5.75MM","note":"700MM","weight_kg":16.5,"unit_price":61,"stock_qty":95,"loading_charges":39,"actual_weight":"5.2-5.5MM","total_amount":5795,"total_weight_kg":1567.5,"created_at":"2026-10-22T13:30:11.430199+00:00","updated_at":"2026-10-22T13:30:11.411199+00:00"},
+    {"id":"0c435d29-758b-4d6f-b84a-48b5079df35f","item_code":"L2","description":"325X5MM","note":"840MM","weight_kg":20.2,"unit_price":82,"stock_qty":14,"loading_charges":7,"actual_weight":null,"total_amount":1148,"total_weight_kg":282.8,"created_at":"2026-10-22T13:30:11.414199+00:00","updated_at":"2026-10-22T13:30:11.411199+00:00"},
+    {"id":"198c6c1e-8f07-449f-b470-1b1178bbc819","item_code":null,"description":"355X5.75MM","note":"Standard","weight_kg":41,"unit_price":173,"stock_qty":7,"loading_charges":8,"actual_weight":"6.0-6.5MM","total_amount":1211,"total_weight_kg":287,"created_at":"2026-10-22T13:30:11.432199+00:00","updated_at":"2026-10-22T13:30:11.411199+00:00"},
+    {"id":"ebf638bf-7769-45d1-87b6-8764d3b080f9","item_code":"B2","description":"42X4MM","note":"95MM","weight_kg":0.18,"unit_price":1.02,"stock_qty":2000,"loading_charges":9,"actual_weight":"3.2-3.5MM","total_amount":2040,"total_weight_kg":360,"created_at":"2026-10-22T12:26:19.739671+00:00","updated_at":"2026-10-22T12:26:19.719671+00:00"}
+  ]
+}

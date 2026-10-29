@@ -12,13 +12,13 @@ type ModalProps = {
   description?: ReactNode;
   children: ReactNode;
   footer?: ReactNode;
-  size?: "sm" | "md" | "lg" | "xl" | "2xl";
+  size?: "sm" | "md" | "lg" | "xl" | "2xl" | "full";
   variant?: "center" | "drawer";
   /** Prevent closing with Esc / backdrop (e.g. while saving). */
   locked?: boolean;
 };
 
-const SIZES = { sm: "max-w-md", md: "max-w-lg", lg: "max-w-2xl", xl: "max-w-4xl", "2xl": "max-w-6xl" };
+const SIZES = { sm: "max-w-md", md: "max-w-lg", lg: "max-w-2xl", xl: "max-w-4xl", "2xl": "max-w-6xl", full: "max-w-[1440px]" };
 
 export function Modal({ open, onClose, title, description, children, footer, size = "md", variant = "center", locked }: ModalProps) {
   const ref = useRef<HTMLDialogElement>(null);

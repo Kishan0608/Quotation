@@ -268,8 +268,6 @@ export async function buildQuotationPdf(
             return fmtWeight(lineWeight(line));
           case "amount":
             return fmtMoney(lineAmount(line));
-          case "loading":
-            return fmtMoney(line.loading_charges ?? 0);
           case "net":
             return fmtMoney(lineNet(line));
           default:
@@ -292,7 +290,6 @@ export async function buildQuotationPdf(
         if (c.key === "qty") return fmtQty(sheetTotals.totalQty);
         if (c.kind === "totalWeight") return fmtWeight(sheetTotals.totalWeight);
         if (c.kind === "amount") return fmtMoney(sheetTotals.grossAmount);
-        if (c.kind === "loading") return fmtMoney(sheetTotals.totalLoading);
         if (c.kind === "net") return fmtMoney(sheetTotals.baseSubtotal);
         return "";
       }),

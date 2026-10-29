@@ -1,6 +1,6 @@
 import { STANDARD_COLUMNS, type ExtraColumn, type QuoteDocument, type QuoteHeader, type QuoteLine, type StandardColumn } from "./types";
 
-export type ExportColumnKind = "index" | "text" | "qty" | "weight" | "money" | "totalWeight" | "amount" | "loading" | "net";
+export type ExportColumnKind = "index" | "text" | "qty" | "weight" | "money" | "totalWeight" | "amount" | "net";
 
 export type ExportColumn = {
   key: string;
@@ -80,7 +80,7 @@ function extraValue(raw: string | undefined) {
 
 /**
  * Columns in the Excel and PDF output, in the supplier-sheet order:
- * No. | Items | WT IN KGS | Actual Weight | RMB/PCS | QTY | Total KG | Total Amount | Length | Loading Charges | Final Total
+ * No. | Items | WT IN KGS | Actual Weight | RMB/PCS | QTY | Total KG | Total Amount | Length | Final Total
  * with the extra columns where they sit on the sheet: the file always matches the sheet
  * (columns deleted on the sheet are left out).
  */
@@ -99,7 +99,6 @@ export function exportColumns(doc: Pick<QuoteDocument, "company" | "header">): E
   cols.push({ key: "total_weight", header: "Total KG", kind: "totalWeight", width: 12, pdfWidth: 16, align: "right" });
   cols.push({ key: "amount", header: "Total Amount", kind: "amount", width: 14, pdfWidth: 19, align: "right" });
   cols.push({ key: "remarks", header: "Length", kind: "text", width: 12, pdfWidth: 15, align: "left", value: (l) => l.remarks || null });
-  cols.push({ key: "loading_charges", header: "Loading Charges", kind: "loading", width: 13, pdfWidth: 16, align: "right", value: (l) => l.loading_charges ?? 0 });
   cols.push({ key: "net", header: "Final Total", kind: "net", width: 15, pdfWidth: 19, align: "right" });
   const byKey = new Map(cols.map((c) => [c.key === "index" ? "idx" : c.key, c]));
   const shown: ExportColumn[] = [];

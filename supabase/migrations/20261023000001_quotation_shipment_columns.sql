@@ -1,9 +1,8 @@
 -- Quotation lines get the supplier-sheet columns:
 --   actual_weight    text           (copied from inventory, e.g. "5.4-5.6MM")
---   loading_charges  numeric        (per line, entered on the quotation)
---   net_amount       generated      = amount + loading_charges  ("Final Total")
--- Lines are priced in RMB (the base currency). The quotation total converts at the end:
---   base_subtotal (RMB) = sum of the lines' final totals
+-- Lines are priced in RMB (the base currency); a line's Final Total is its amount (qty x price).
+-- The quotation total converts at the end:
+--   base_subtotal (RMB) = sum of the lines' amounts
 --   subtotal            = base_subtotal x exchange_rate (quotation currency, e.g. INR)
 --   then discounts / charges / taxes -> grand_total (quotation currency).
 -- Excel-style sheets: quotations.sheet_names (tab names) and quotation_items.sheet (index).
@@ -11,11 +10,10 @@
 
 alter table public.quotation_items
   add column if not exists actual_weight text check (char_length(actual_weight) <= 100);
-alter table public.quotation_items
-  add column if not exists loading_charges numeric(14, 2) not null default 0 check (loading_charges >= 0);
-alter table public.quotation_items
-  add column if not exists net_amount numeric(18, 2)
-    generated always as (round(qty * unit_price, 2) + loading_charges) stored;
+-- Loading charges are no longer used: drop the columns an earlier version of this script added
+-- (Final Total = amount).
+alter table public.quotation_items drop column if exists net_amount;
+alter table public.quotation_items drop column if exists loading_charges;
 
 alter table public.quotations
   add column if not exists base_subtotal numeric(18, 2) not null default 0;
@@ -39,6 +37,10 @@ alter table public.quotations
 alter table public.quotation_items
   add column if not exists extra jsonb not null default '{}'::jsonb
     check (jsonb_typeof(extra) = 'object');
+
+-- Row of each line on its sheet, empty rows included (lines open again in the same rows).
+alter table public.quotation_items
+  add column if not exists row_index integer check (row_index >= 0 and row_index < 10000);
 
 -- Cell formatting from the sheet's Home ribbon (font, colours, alignment, borders, merge), by column id.
 alter table public.quotation_items
@@ -116,7 +118,7 @@ begin
                 where jsonb_typeof(c) <> 'object'
                    or coalesce(c ->> 'key', '') !~ '^[A-Za-z0-9]{1,24}$'
                    or char_length(coalesce(c ->> 'name', '')) > 40
-                   or (c ? 'after' and coalesce(c ->> 'after', '') not in ('idx', 'description', 'unit_weight_kg', 'actual_weight', 'unit_price', 'qty', 'total_weight', 'amount', 'remarks', 'loading_charges', 'net')))
+                   or (c ? 'after' and coalesce(c ->> 'after', '') not in ('idx', 'description', 'unit_weight_kg', 'actual_weight', 'unit_price', 'qty', 'total_weight', 'amount', 'remarks', 'net')))
      or (select count(distinct c ->> 'key') from jsonb_array_elements(v_cols) c) <> jsonb_array_length(v_cols) then
     raise exception 'Invalid extra columns' using errcode = '22023';
   end if;
@@ -130,7 +132,7 @@ begin
   if jsonb_typeof(v_hidden) <> 'array'
      or exists (select 1 from jsonb_array_elements(v_hidden) h
                 where coalesce(h #>> '{}', '') not in ('unit_weight_kg', 'actual_weight', 'unit_price', 'qty',
-                                                       'total_weight', 'amount', 'remarks', 'loading_charges')) then
+                                                       'total_weight', 'amount', 'remarks')) then
     raise exception 'Invalid hidden columns' using errcode = '22023';
   end if;
   select coalesce(jsonb_agg(distinct h), '[]'::jsonb) into v_hidden from jsonb_array_elements(v_hidden) h;
@@ -139,7 +141,7 @@ begin
   v_titles := coalesce(p_header -> 'column_titles', '{}'::jsonb);
   if jsonb_typeof(v_titles) <> 'object'
      or exists (select 1 from jsonb_each(v_titles) t
-                where t.key not in ('idx', 'description', 'unit_weight_kg', 'actual_weight', 'unit_price', 'qty', 'total_weight', 'amount', 'remarks', 'loading_charges', 'net')
+                where t.key not in ('idx', 'description', 'unit_weight_kg', 'actual_weight', 'unit_price', 'qty', 'total_weight', 'amount', 'remarks', 'net')
                    or jsonb_typeof(t.value) <> 'string' or char_length(trim(t.value #>> '{}')) > 40) then
     raise exception 'Invalid column titles' using errcode = '22023';
   end if;
@@ -230,7 +232,7 @@ begin
   insert into public.quotation_items (
     quotation_id, position, inventory_item_id, item_code, description,
     unit, qty, unit_weight_kg, base_price, unit_price, price_overridden, remarks,
-    actual_weight, loading_charges, sheet, extra, fmt
+    actual_weight, sheet, extra, fmt, row_index
   )
   select
     v_id,
@@ -247,7 +249,6 @@ begin
     coalesce((e.item ->> 'price_overridden')::boolean, false),
     nullif(e.item ->> 'remarks', ''),
     nullif(left(trim(e.item ->> 'actual_weight'), 100), ''),
-    greatest(coalesce((e.item ->> 'loading_charges')::numeric, 0), 0),
     least(greatest(coalesce((e.item ->> 'sheet')::integer, 0), 0), jsonb_array_length(v_sheets) - 1),
     -- Only text values (max 300 characters) of columns that exist.
     (select coalesce(jsonb_object_agg(x.key, left(trim(x.value #>> '{}'), 300)), '{}'::jsonb)
@@ -256,12 +257,13 @@ begin
         and exists (select 1 from jsonb_array_elements(v_cols) c where c ->> 'key' = x.key)),
     -- Formatting is validated by the app; here only its shape and size are checked.
     case when jsonb_typeof(e.item -> 'fmt') = 'object' and length((e.item -> 'fmt')::text) <= 20000
-         then e.item -> 'fmt' else '{}'::jsonb end
+         then e.item -> 'fmt' else '{}'::jsonb end,
+    case when coalesce(e.item ->> 'row', '') ~ '^\d{1,4}$' then (e.item ->> 'row')::integer end
   from jsonb_array_elements(p_items) with ordinality as e (item, ord);
 
-  -- Totals: final totals of the lines (RMB) -> x exchange rate -> discounts -> charges
+  -- Totals: amounts of the lines (RMB) -> x exchange rate -> discounts -> charges
   -- -> taxes (on the taxable amount), all in the quotation currency.
-  select coalesce(sum(qi.qty), 0), coalesce(sum(qi.total_weight_kg), 0), coalesce(sum(qi.net_amount), 0)
+  select coalesce(sum(qi.qty), 0), coalesce(sum(qi.total_weight_kg), 0), coalesce(sum(qi.amount), 0)
     into v_tq, v_tw, v_base
   from public.quotation_items qi
   where qi.quotation_id = v_id;

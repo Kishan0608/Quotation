@@ -5,6 +5,7 @@ import {
   ArrowLeftToLine,
   ArrowRightToLine,
   ArrowUpToLine,
+  CheckCheck,
   ChevronDown,
   ChevronUp,
   ClipboardPaste,
@@ -91,7 +92,6 @@ type BuiltinId =
   | "total_weight"
   | "amount"
   | "remarks"
-  | "loading_charges"
   | "net";
 
 type Col = {
@@ -138,7 +138,6 @@ function columns(currency: string): Col[] {
     b("total_weight", "Total KG", 104, "computed", "right"),
     b("amount", "Total Amount", 124, "computed", "right"),
     b("remarks", "Length", 104, "text", "left"),
-    b("loading_charges", "Loading Charges", 120, "number", "right"),
     b("net", "Final Total", 128, "computed", "right"),
   ];
 }
@@ -159,7 +158,6 @@ function totalFor(id: string, totals: QuoteTotals): number | null {
   if (id === "qty") return totals.totalQty;
   if (id === "total_weight") return totals.totalWeight;
   if (id === "amount") return totals.grossAmount;
-  if (id === "loading_charges") return totals.totalLoading;
   if (id === "net") return totals.baseSubtotal;
   return null;
 }
@@ -169,8 +167,7 @@ function rawValue(line: QuoteLine, col: Col): string {
   switch (col.builtin) {
     case "qty":
     case "unit_weight_kg":
-    case "unit_price":
-    case "loading_charges": {
+    case "unit_price": {
       const v = line[col.builtin];
       return v == null ? "" : String(v);
     }
@@ -203,14 +200,8 @@ function displayValue(line: QuoteLine, col: Col): string {
       return line.qty == null && line.unit_price == null
         ? ""
         : fmtMoney(lineAmount(line));
-    case "loading_charges":
-      return line.loading_charges == null ? "" : fmtMoney(line.loading_charges);
     case "net":
-      return line.qty == null &&
-        line.unit_price == null &&
-        line.loading_charges == null
-        ? ""
-        : fmtMoney(lineNet(line));
+      return line.qty == null && line.unit_price == null ? "" : fmtMoney(lineNet(line));
     default:
       return rawValue(line, col);
   }
@@ -226,17 +217,10 @@ function formulaFor(
     const l = letterOf(src);
     return l ? `${l}${row}` : null;
   };
-  const [qty, wt, price, amount, loading] = [
-    ref("qty"),
-    ref("unit_weight_kg"),
-    ref("unit_price"),
-    ref("amount"),
-    ref("loading_charges"),
-  ];
+  const [qty, wt, price, amount] = [ref("qty"), ref("unit_weight_kg"), ref("unit_price"), ref("amount")];
   if (id === "total_weight") return qty && wt ? `=${qty}*${wt}` : null;
   if (id === "amount") return qty && price ? `=ROUND(${qty}*${price},2)` : null;
-  if (id === "net")
-    return amount ? (loading ? `=${amount}+${loading}` : `=${amount}`) : null;
+  if (id === "net") return amount ? `=${amount}` : null;
   return null;
 }
 
@@ -277,10 +261,6 @@ function applyEdit(
         return { ...line, [col.builtin]: text.slice(0, LIMITS[col.builtin]) };
       case "qty":
         return { ...line, qty: num() };
-      case "loading_charges": {
-        const n = num();
-        return { ...line, loading_charges: n == null ? null : round2(n) };
-      }
       case "unit_weight_kg": {
         const next = { ...line, unit_weight_kg: num() };
         if (!next.price_overridden && header.pricing_basis === "kg")
@@ -603,11 +583,16 @@ export function SheetGrid({
     if (typeof result === "string") return result;
     if (existing) {
       const copy = base.slice();
-      copy[r] = result;
+      // Editing a row that Import marked red means it has been looked at.
+      copy[r] = existing.check ? { ...result, check: undefined } : result;
       return copy;
     }
     if (isBlankLine(result)) return base;
-    return [...base, result];
+    // Like Excel, the entry stays in the row it was typed in: the empty rows above it are kept.
+    const copy = base.slice();
+    while (copy.length < r) copy.push(blankLine(activeSheet));
+    copy[r] = result;
+    return copy;
   };
 
   /** Saves the cell being typed in. `refocus` = false when something outside the sheet (a ribbon
@@ -623,12 +608,7 @@ export function SheetGrid({
       }
       if (next !== lines) onChange(next);
     }
-    const target = move
-      ? clampPos(
-          Math.min(editing.r, lines.length) + move.dr,
-          editing.c + move.dc,
-        )
-      : { r: editing.r, c: editing.c };
+    const target = move ? clampPos(editing.r + move.dr, editing.c + move.dc) : { r: editing.r, c: editing.c };
     setEditing(null);
     select(target);
     if (refocus) requestAnimationFrame(focusGrid);
@@ -712,7 +692,7 @@ export function SheetGrid({
     }
     let next = lines;
     let written = 0;
-    const startRow = Math.min(range.r1, lines.length);
+    const startRow = range.r1;
     // Copied from this sheet: bring the formatting along (like Excel's normal paste).
     const normalized = text.replace(/\r\n?/g, "\n").replace(/\n$/, "");
     const fmts =
@@ -725,7 +705,7 @@ export function SheetGrid({
       for (let j = 0; j < rows[i].length; j++) {
         const c = range.c1 + j;
         if (c >= cols.length) break;
-        const r = Math.min(startRow + i, next.length);
+        const r = startRow + i;
         const result = writeCell(next, r, c, rows[i][j]);
         if (typeof result === "string") {
           toast.error(`Row ${i + 1}, column ${sheetColLetter(c)}: ${result}`);
@@ -772,7 +752,7 @@ export function SheetGrid({
       for (let c = area.c1; c <= area.c2; c++) {
         if (!isEditableCol(c)) continue;
         const sc = wrap(c, range.c1, w);
-        const row = Math.min(r, next.length); // going down, rows past the last line become new lines
+        const row = r;
         const result = writeCell(next, row, c, src ? rawValue(src, cols[sc]) : "");
         if (typeof result === "string") {
           skipped++; // e.g. text dragged into a number column
@@ -794,21 +774,23 @@ export function SheetGrid({
     if (skipped) toast.info(`${skipped} cell${skipped === 1 ? "" : "s"} skipped: the value doesn't fit that column (for example text in a number column).`);
     // The selection grows over the filled cells, like Excel.
     setAnchor({ r: Math.min(range.r1, area.r1), c: Math.min(range.c1, area.c1) });
-    setSel({ r: Math.max(range.r2, Math.min(area.r2, Math.max(next.length - 1, range.r2))), c: Math.max(range.c2, area.c2) });
+    setSel({ r: Math.max(range.r2, area.r2), c: Math.max(range.c2, area.c2) });
   };
 
   const rowOp = (
-    op: "above" | "below" | "duplicate" | "up" | "down" | "delete" | "reprice",
+    op: "above" | "below" | "duplicate" | "up" | "down" | "delete" | "reprice" | "checked",
   ) => {
     if (readOnly) return;
     const r1 = range.r1;
     const r2 = Math.min(range.r2, lines.length - 1);
     const next = lines.slice();
     if (op === "above" || op === "below") {
-      const at =
-        r1 < lines.length ? (op === "above" ? r1 : r2 + 1) : lines.length;
-      next.splice(at, 0, blankLine(activeSheet));
-      onChange(next);
+      const at = op === "above" ? r1 : range.r2 + 1;
+      // Below the last line every row is already empty: nothing to move down.
+      if (at < lines.length) {
+        next.splice(at, 0, blankLine(activeSheet));
+        onChange(next);
+      }
       select(clampPos(at, sel.c));
       return;
     }
@@ -840,6 +822,8 @@ export function SheetGrid({
         setAnchor({ r: r1, c: 0 });
         setSel({ r: r1, c: lastCol });
       } else select(clampPos(r1, sel.c));
+    } else if (op === "checked") {
+      for (let r = r1; r <= r2; r++) if (lines[r].check) next[r] = { ...lines[r], check: undefined };
     } else if (op === "reprice") {
       let missing = 0;
       for (let r = r1; r <= r2; r++) {
@@ -1523,6 +1507,7 @@ export function SheetGrid({
   })();
 
   const onLine = range.r1 < lines.length;
+  const flaggedInSel = lines.slice(range.r1, Math.min(range.r2, lines.length - 1) + 1).some((l) => l.check);
   const activeFmt = fmtAt(cursor.r, cursor.c) ?? {};
   const keepFocus = (e: ReactMouseEvent) => e.preventDefault();
   const tool =
@@ -2252,6 +2237,11 @@ export function SheetGrid({
             <Eraser className="size-4 text-slate-500" /> Clear contents{" "}
             <span className="ml-auto text-[11px] text-slate-400">Del</span>
           </button>
+          {flaggedInSel ? (
+            <button type="button" role="menuitem" className={menuItem} disabled={readOnly} onClick={() => (setMenu(null), rowOp("checked"))}>
+              <CheckCheck className="size-4 text-excel-700" /> Mark as checked
+            </button>
+          ) : null}
           {menu.kind === "cell" ? (
             <button
               type="button"
@@ -2443,7 +2433,7 @@ const SheetRow = memo(function SheetRow({
     });
   }
   return (
-    <tr className={cn(flash && "animate-fade-in [&>td]:bg-[#e2efda]")}>
+    <tr className={cn(flash && "animate-fade-in [&>td]:bg-[#e2efda]")} title={line?.check ? `Check this line: ${line.check}` : undefined}>
       <th
         scope="row"
         onMouseDown={(e) => h.current.rowDown(r, e)}
@@ -2452,7 +2442,9 @@ const SheetRow = memo(function SheetRow({
         className={cn(
           "sticky left-0 z-10 h-[22px] cursor-[e-resize] border-r border-b border-[#c8c8c8] text-center text-[12px]",
           rowHeader === "none"
-            ? "bg-[#f3f3f3] font-normal text-[#444]"
+            ? line?.check
+              ? "bg-[#ffd9d9] font-semibold text-[#c00000]"
+              : "bg-[#f3f3f3] font-normal text-[#444]"
             : rowHeader === "full"
               ? "bg-[#217346] font-semibold text-white"
               : "bg-[#d2d2d2] font-semibold text-[#217346]",
@@ -2499,6 +2491,9 @@ const SheetRow = memo(function SheetRow({
         edges.push(...borderShadows(f));
         const inFill = fill != null && fill.c1 <= cEnd && fill.c2 >= c;
         const selFill = inSel && multi && !active;
+        // A line Import marked for checking: light red with a red edge.
+        const flagged = Boolean(line?.check) && !isTotal;
+        if (flagged && c === 0) edges.push("inset 3px 0 0 #e03131");
         return (
           <td
             key={col.id}
@@ -2517,6 +2512,7 @@ const SheetRow = memo(function SheetRow({
             }
             style={{
               ...cellStyle(f, selFill),
+              ...(flagged && !selFill && !f?.fill ? { backgroundColor: "#ffe8e8" } : {}),
               boxShadow: edges.length ? edges.join(", ") : undefined,
             }}
             className={cn(

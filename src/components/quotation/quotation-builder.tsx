@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowLeft, Check, ClipboardList, Copy, PackagePlus, Save, Sheet, Trash2, UserRound } from "lucide-react";
+import { ArrowLeft, ClipboardList, Copy, FileUp, Save, Trash2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
@@ -10,13 +10,14 @@ import { Button, ButtonLink } from "@/components/ui/button";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
 import { ConfirmDialog } from "@/components/ui/dialog";
 import { Field, Input, Textarea } from "@/components/ui/field";
-import { cn } from "@/lib/cn";
-import { fmtDateTime, fmtMoney } from "@/lib/format";
+import { fmtDateTime, fmtMoney, round2 } from "@/lib/format";
 import type { PickerItem } from "@/lib/inventory/types";
 import { computeTotals, isBlankLine, repriceLines } from "@/lib/quotation/calc";
-import { STANDARD_COLUMNS, type ColumnLayoutPatch, type CompanyInfo, type QuoteDocument, type QuoteHeader, type QuoteLine, type StandardColumn } from "@/lib/quotation/types";
+import { MAX_EXTRA_COLUMNS } from "@/lib/quotation/schema";
+import { HIDEABLE_COLUMNS, STANDARD_COLUMNS, type ColumnLayoutPatch, type CompanyInfo, type QuoteDocument, type QuoteHeader, type QuoteLine, type StandardColumn } from "@/lib/quotation/types";
 import { useLocalStorage, writeLocalStorage } from "@/lib/use-local-storage";
 import { ExportMenu } from "./export-menu";
+import { ImportDialog, type ImportedLine } from "./import-dialog";
 import { BillLines } from "./bill-lines";
 import { ItemPicker } from "./item-picker";
 import { blankLine, lineFromItem } from "./line-utils";
@@ -206,6 +207,62 @@ export function QuotationBuilder(props: BuilderProps) {
     toast.success(`Added ${item.description}`, { duration: 1800 });
   };
 
+  /**
+   * Lines from an imported list, in the file's order, after the last filled row. An inventory
+   * item already on this sheet gets the quantity added; a line not in the inventory comes in as a
+   * new line with the file's text. Lines still to be checked carry the reason (red row).
+   */
+  const [importOpen, setImportOpen] = useState(false);
+  const addItems = (list: ImportedLine[]) => {
+    // The customer's notes go in a "Note" column on the sheet, made next to Length when first needed.
+    let noteKey: string | null = null;
+    if (list.some((l) => l.note)) {
+      const existing = header.extra_columns.find((c) => c.name.trim().toLowerCase() === "note");
+      if (existing) noteKey = existing.key;
+      else if (header.extra_columns.length < MAX_EXTRA_COLUMNS) {
+        noteKey = Math.random().toString(36).slice(2, 10) || "note";
+        patchColumns({ extra_columns: [...header.extra_columns, { key: noteKey, name: "Note", after: "remarks" }] });
+      } else toast.info(`The notes were left out: the sheet already has ${MAX_EXTRA_COLUMNS} extra columns.`);
+    }
+    const rows = sheetLines.slice();
+    let added = 0;
+    let updated = 0;
+    for (const l of list) {
+      const { item, qty, check } = l;
+      const same = item ? rows.findIndex((r) => r.inventory_item_id === item.id) : -1;
+      if (same >= 0) {
+        rows[same] = { ...rows[same], qty: (rows[same].qty ?? 0) + (qty ?? 0), check: check ?? rows[same].check };
+        updated++;
+        continue;
+      }
+      // The inventory item's line, with the fields as they were set in the import window.
+      const base = item ? lineFromItem(item, qty ?? 1, header, sheetIndex) : { ...blankLine(sheetIndex), description: l.text.slice(0, 300) };
+      const price = l.price != null ? round2(l.price) : base.unit_price;
+      const line: QuoteLine = {
+        ...base,
+        qty,
+        unit_weight_kg: l.weight,
+        actual_weight: l.actual.slice(0, 100),
+        unit_price: price,
+        price_overridden: item ? price != null && price !== base.unit_price : price != null,
+        remarks: l.length.slice(0, 300),
+        extra: noteKey && l.note ? { ...base.extra, [noteKey]: l.note.slice(0, 300) } : base.extra,
+        check,
+      };
+      const at = rows.reduce((last, r, i) => (isBlankLine(r) ? last : i), -1) + 1;
+      if (at < rows.length && isBlankLine(rows[at])) rows[at] = { ...line, fmt: rows[at].fmt };
+      else rows.splice(at, 0, line);
+      added++;
+    }
+    commitSheetLines(rows);
+    const flagged = list.filter((l) => l.check).length;
+    toast.success(
+      `Imported ${added} line${added === 1 ? "" : "s"}${updated ? `, ${updated} already on the sheet (quantity added)` : ""}.` +
+        (flagged ? ` ${flagged} red line${flagged === 1 ? "" : "s"} to check on the sheet.` : ""),
+    );
+    document.getElementById("step-sheet")?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+
   // ---- Save / delete ------------------------------------------------------------
   const save = useCallback(async () => {
     if (readOnly || saving) return;
@@ -223,6 +280,14 @@ export function QuotationBuilder(props: BuilderProps) {
       toast.error(`Line ${missing + 1} needs a description.`);
       return;
     }
+    // Each line's row on its sheet (empty rows included), so it opens again in the same place.
+    const rowOnSheet = new Map<string, number>();
+    const perSheet = new Map<number, number>();
+    for (const l of lines) {
+      const n = perSheet.get(l.sheet) ?? 0;
+      rowOnSheet.set(l.key, n);
+      perSheet.set(l.sheet, n + 1);
+    }
     setSaving(true);
     const res = await saveQuotation({
       id,
@@ -239,6 +304,8 @@ export function QuotationBuilder(props: BuilderProps) {
         price_overridden: l.price_overridden,
         remarks: l.remarks,
         sheet: l.sheet,
+        // Row on its sheet (empty rows above it included), so it opens again in the same place.
+        row: rowOnSheet.get(l.key) ?? 0,
         // Only values of columns that still exist (a deleted column's values are dropped).
         extra: Object.fromEntries(Object.entries(l.extra ?? {}).filter(([k, v]) => v.trim() && header.extra_columns.some((c) => c.key === k))),
         // Formatting of columns that still exist.
@@ -246,7 +313,6 @@ export function QuotationBuilder(props: BuilderProps) {
           Object.entries(l.fmt ?? {}).filter(([k]) => (k.startsWith("x:") ? header.extra_columns.some((c) => `x:${c.key}` === k) : STANDARD_COLUMNS.includes(k as StandardColumn))),
         ),
         actual_weight: l.actual_weight,
-        loading_charges: l.loading_charges ?? 0,
       })),
     });
     setSaving(false);
@@ -262,7 +328,7 @@ export function QuotationBuilder(props: BuilderProps) {
       setId(res.data.id);
       router.replace(`/quotations/${res.data.id}`);
     }
-  }, [readOnly, saving, header, filledLines, id, isNew, router]);
+  }, [readOnly, saving, header, filledLines, lines, id, isNew, router]);
 
   const runDelete = async () => {
     if (!id) return;
@@ -332,11 +398,6 @@ export function QuotationBuilder(props: BuilderProps) {
     return { quoteNo: quoteNo ?? "", preparedBy: props.preparedBy ?? userName, header, lines: filledLines, totals, company };
   };
 
-  const steps = [
-    { id: "step-customer", label: "Customer", icon: UserRound, done: Boolean(header.customer_name.trim()) },
-    { id: "step-items", label: "Add items", icon: PackagePlus, done: filledLines.length > 0, count: filledLines.length },
-    { id: "step-sheet", label: "Sheet", icon: Sheet, done: filledLines.length > 0 && !dirty && !isNew },
-  ];
 
   return (
     <div className="pb-16">
@@ -370,6 +431,11 @@ export function QuotationBuilder(props: BuilderProps) {
               <Trash2 />
             </Button>
           ) : null}
+          {!readOnly ? (
+            <Button variant="outline" onClick={() => setImportOpen(true)} title="Import items from an Excel, CSV, PDF or photo">
+              <FileUp /> Import
+            </Button>
+          ) : null}
           <ExportMenu buildDocument={buildDocument} fileBase={{ quoteNo: quoteNo ?? "Quotation", customer: header.customer_name }} />
           {!readOnly ? (
             <Button onClick={save} loading={saving} title="Save (Ctrl+S)">
@@ -377,26 +443,6 @@ export function QuotationBuilder(props: BuilderProps) {
             </Button>
           ) : null}
         </div>
-
-        <nav aria-label="Steps" className="scroll-thin mt-3 flex gap-2 overflow-x-auto">
-          {steps.map((s, i) => (
-            <button
-              key={s.id}
-              type="button"
-              onClick={() => document.getElementById(s.id)?.scrollIntoView({ behavior: "smooth", block: "start" })}
-              className={cn(
-                "flex shrink-0 items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors",
-                s.done ? "border-excel-100 bg-excel-50 text-excel-800" : "border-slate-200 bg-white text-slate-600 hover:border-slate-300",
-              )}
-            >
-              <span className={cn("grid size-5 place-items-center rounded-full text-[10px] font-bold", s.done ? "bg-excel-700 text-white" : "bg-slate-200 text-slate-600")}>
-                {s.done ? <Check className="size-3" /> : i + 1}
-              </span>
-              {s.label}
-              {s.count ? <span className="rounded-full bg-white px-1.5 text-[10px] text-slate-600 ring-1 ring-slate-200">{s.count}</span> : null}
-            </button>
-          ))}
-        </nav>
       </div>
 
       {draft ? (
@@ -419,11 +465,12 @@ export function QuotationBuilder(props: BuilderProps) {
               setHeader({
                 ...draft.header,
                 sheet_names: draft.header.sheet_names?.length ? draft.header.sheet_names : ["Quotation"],
-                extra_columns: draft.header.extra_columns ?? [],
-                hidden_columns: draft.header.hidden_columns ?? [],
-                column_titles: draft.header.column_titles ?? {},
+                // Only columns that still exist (e.g. a draft from before Loading Charges was removed).
+                extra_columns: (draft.header.extra_columns ?? []).map(({ after, ...c }) => (after && STANDARD_COLUMNS.includes(after) ? { ...c, after } : c)),
+                hidden_columns: (draft.header.hidden_columns ?? []).filter((h) => (HIDEABLE_COLUMNS as readonly string[]).includes(h)),
+                column_titles: Object.fromEntries(Object.entries(draft.header.column_titles ?? {}).filter(([k]) => STANDARD_COLUMNS.includes(k as StandardColumn))),
               });
-              setLines(draft.lines.map((l) => ({ ...l, sheet: l.sheet ?? 0, actual_weight: l.actual_weight ?? "", loading_charges: l.loading_charges ?? null, extra: l.extra ?? {}, fmt: l.fmt ?? {} })));
+              setLines(draft.lines.map((l) => ({ ...l, sheet: l.sheet ?? 0, actual_weight: l.actual_weight ?? "", extra: l.extra ?? {}, fmt: l.fmt ?? {} })));
               setDirty(true);
               toast.success("Draft restored.");
             }}
@@ -536,6 +583,7 @@ export function QuotationBuilder(props: BuilderProps) {
         </Card>
       </fieldset>
 
+      <ImportDialog open={importOpen} onClose={() => setImportOpen(false)} onAdd={addItems} priceOf={(item) => lineFromItem(item, 1, header, sheetIndex).unit_price} />
       <ConfirmDialog
         open={sheetToDelete != null}
         title={`Delete sheet "${sheetToDelete != null ? header.sheet_names[sheetToDelete] : ""}"?`}

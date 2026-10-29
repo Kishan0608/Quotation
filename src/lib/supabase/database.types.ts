@@ -82,8 +82,6 @@ export type InventoryItemRow = {
   weight_kg: number | null;
   unit_price: number | null;
   stock_qty: number;
-  /** CNY for the whole row (not per piece). */
-  loading_charges: number;
   /** As written by the supplier, e.g. "5.5-5.6MM". */
   actual_weight: string | null;
   note: string | null;
@@ -161,16 +159,15 @@ export type QuotationItemRow = {
   remarks: string | null;
   /** Index into quotations.sheet_names. */
   sheet: number;
+  /** Row on its sheet, empty rows included (null for lines saved before rows were kept). */
+  row_index: number | null;
   /** Values of the quotation's extra columns, by column key. */
   extra: Record<string, string>;
   /** Cell formatting, by column id. */
   fmt: Record<string, import("../quotation/types").CellFmt>;
   actual_weight: string | null;
-  loading_charges: number;
   total_weight_kg: number;
   amount: number;
-  /** amount + loading_charges (generated). */
-  net_amount: number;
 };
 
 export type DashboardSummary = {
@@ -197,7 +194,7 @@ export type Database = {
       quotations: Table<QuotationRow, Partial<QuotationRow> & { customer_name: string }>;
       quotation_items: Table<
         QuotationItemRow,
-        Omit<QuotationItemRow, "id" | "total_weight_kg" | "amount" | "net_amount">
+        Omit<QuotationItemRow, "id" | "total_weight_kg" | "amount">
       >;
     };
     Views: { [_ in never]: never };

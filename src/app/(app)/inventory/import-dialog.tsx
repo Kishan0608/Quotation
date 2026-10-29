@@ -154,7 +154,7 @@ export function ImportDialog({ open, onClose }: { open: boolean; onClose: () => 
             <table className="w-full min-w-[640px] text-xs">
               <thead className="sticky top-0 bg-slate-50 text-left text-slate-500">
                 <tr className="border-b border-slate-200">
-                  {["Row", "Item no.", "Items", "Wt (kg)", "Price", "Qty", "Note / Length"].map((h) => (
+                  {["Row", "Items", "Wt (kg)", "Price", "Qty", "Note / Length"].map((h) => (
                     <th key={h} className="px-2 py-2 font-medium">
                       {h}
                     </th>
@@ -165,7 +165,6 @@ export function ImportDialog({ open, onClose }: { open: boolean; onClose: () => 
                 {result.rows.slice(0, 300).map(({ row, data }) => (
                   <tr key={row} className="hover:bg-slate-50">
                     <td className="num px-2 py-1.5 text-slate-400">{row}</td>
-                    <td className="px-2 py-1.5 font-mono">{data.item_code}</td>
                     <td className="px-2 py-1.5 font-medium">{data.description}</td>
                     <td className="num px-2 py-1.5 text-right">{fmtWeight(data.weight_kg)}</td>
                     <td className="num px-2 py-1.5 text-right">{data.unit_price != null ? fmtMoney(data.unit_price) : ""}</td>

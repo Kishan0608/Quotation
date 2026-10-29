@@ -74,8 +74,6 @@ export function BillLines({ adjustments, totals, currency, baseCurrency, readOnl
       <dl className="divide-y divide-slate-100 rounded-lg border border-slate-200 text-sm">
         {row("Total quantity", fmtQty(totals.totalQty))}
         {row("Total weight", `${fmtWeight(totals.totalWeight)} kg`)}
-        {totals.totalLoading ? row(`Total amount (${base})`, fmtMoney(totals.grossAmount)) : null}
-        {totals.totalLoading ? row(`Loading charges (${base})`, `+ ${fmtMoney(totals.totalLoading)}`) : null}
         {converts ? (
           <>
             {row(`Final total (${base})`, fmtMoney(totals.baseSubtotal), true)}

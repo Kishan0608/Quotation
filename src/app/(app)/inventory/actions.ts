@@ -34,7 +34,10 @@ export async function updateInventoryItem(id: unknown, input: unknown): Promise<
   const parsed = inventoryItemSchema.safeParse(input);
   if (!parsed.success) return { ok: false, error: "Please fix the highlighted fields.", fieldErrors: fieldErrors(parsed.error) };
 
-  const { data, error } = await auth.supabase.from("inventory_items").update(parsed.data).eq("id", itemId.data).select("*").maybeSingle();
+  // Item numbers are not shown or edited any more; the one stored stays as it is.
+  const fields: Partial<typeof parsed.data> = { ...parsed.data };
+  delete fields.item_code;
+  const { data, error } = await auth.supabase.from("inventory_items").update(fields).eq("id", itemId.data).select("*").maybeSingle();
   if (error) return { ok: false, error: dbErrorMessage(error) };
   if (!data) return { ok: false, error: "The item was not found or you cannot edit it." };
   done();

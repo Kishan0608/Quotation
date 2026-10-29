@@ -7,7 +7,7 @@ export type ImportRow = { row: number; data: InventoryInput };
 export type ImportIssue = { row: number; message: string };
 export type ImportResult = { sheetName: string; rows: ImportRow[]; issues: ImportIssue[]; truncated: boolean };
 
-type Field = "item_code" | "description" | "weight_kg" | "unit_price" | "stock_qty" | "loading_charges" | "actual_weight" | "note" | "total";
+type Field = "item_code" | "description" | "weight_kg" | "unit_price" | "stock_qty" | "loading" | "actual_weight" | "note" | "total";
 
 // Header text -> field. Order matters: first match wins for each column.
 const HEADER_RULES: [Field, RegExp][] = [
@@ -17,11 +17,12 @@ const HEADER_RULES: [Field, RegExp][] = [
   // "QTY /PCS" is a quantity, not a price per piece.
   ["unit_price", /^(rm[bp]|cny|price|rate|unit\s*price)(\s*\/\s*pcs?)?$|^(?!qty|quantity).*\/\s*pcs$/i],
   ["stock_qty", /^(qty|quantity|stock|pcs|nos)(\s*\/\s*pcs)?$/i],
-  ["loading_charges", /^loading\s*charges?\W*$/i],
+  // Loading charges are not imported; the column only helps find the unlabeled actual weight.
+  ["loading", /^loading\s*charges?\W*$/i],
   ["actual_weight", /^actual\s*w(eigh)?t\W*$/i],
   // NOTE and LENGTH are the same column (标准, 1280MM, CONCENTRIC…); sheets use either header.
   ["note", /^(note|notes|remark|remarks|length|note\s*\/\s*length|length\s*\/\s*note)$/i],
-  // Only used to find the unlabeled actual-weight column (see below).
+  // Also only used to find the unlabeled actual-weight column (see below).
   ["total", /^total$/i],
 ];
 
@@ -70,7 +71,7 @@ function findHeader(ws: Worksheet) {
  * Reads the first worksheet that has an "ITEMS"/"Description" header (like
  * the supplier loading plan) and turns every row into a validated inventory
  * item with the same columns: ITEMS NO., ITEMS, WT IN KGS, RMB/PCS, QTY,
- * LOADING CHARGES, Actual Weight, NOTE (or LENGTH).
+ * Actual Weight, NOTE (or LENGTH). A LOADING CHARGES column is skipped.
  */
 export function parseInventoryWorkbook(workbook: Workbook): ImportResult {
   for (const ws of workbook.worksheets) {
@@ -86,8 +87,8 @@ export function parseInventoryWorkbook(workbook: Workbook): ImportResult {
       ? undefined
       : header.columns.has("total")
         ? header.columns.get("total")! + 1
-        : header.columns.has("loading_charges")
-          ? header.columns.get("loading_charges")! + 2
+        : header.columns.has("loading")
+          ? header.columns.get("loading")! + 2
           : undefined;
     const actualIsUnlabeled = unlabeledActual != null;
     const col = (f: Field) => (f === "actual_weight" && actualIsUnlabeled ? unlabeledActual : header.columns.get(f));
@@ -124,7 +125,6 @@ export function parseInventoryWorkbook(workbook: Workbook): ImportResult {
         weight_kg: weight,
         unit_price: price,
         stock_qty: qty ?? 0,
-        loading_charges: parseNumber(get("loading_charges")) ?? 0,
         actual_weight: cleanActualWeight(rawActual == null ? null : String(rawActual)),
         note: cleanNote(rawNote == null ? null : String(rawNote)),
       };

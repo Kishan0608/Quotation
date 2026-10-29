@@ -1,5 +1,6 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { blankLine } from "@/components/quotation/line-utils";
 import { STANDARD_COLUMNS, type QuoteHeader, type QuoteLine, type StandardColumn } from "@/lib/quotation/types";
 import type { CompanySettingsRow, Database, QuotationItemRow, QuotationRow, QuotationStatus } from "@/lib/supabase/database.types";
 
@@ -102,10 +103,28 @@ export function toLine(i: QuotationItemRow): QuoteLine {
     price_overridden: i.price_overridden,
     remarks: i.remarks ?? "",
     actual_weight: i.actual_weight ?? "",
-    loading_charges: i.loading_charges == null ? null : Number(i.loading_charges),
     extra: i.extra && typeof i.extra === "object" ? i.extra : {},
     fmt: i.fmt && typeof i.fmt === "object" ? i.fmt : {},
   };
+}
+
+/**
+ * The saved lines with the empty rows between them put back, so every line opens in the row it
+ * was typed in (lines saved before rows were kept simply follow each other).
+ */
+function withEmptyRows(items: QuotationItemRow[]): QuoteLine[] {
+  const out: QuoteLine[] = [];
+  const sheets = [...new Set(items.map((i) => Number(i.sheet ?? 0)))].sort((a, b) => a - b);
+  for (const sheet of sheets) {
+    const rows: QuoteLine[] = [];
+    for (const item of items.filter((i) => Number(i.sheet ?? 0) === sheet)) {
+      const at = item.row_index;
+      if (at != null && at >= rows.length && at < 10_000) while (rows.length < at) rows.push(blankLine(sheet));
+      rows.push(toLine(item));
+    }
+    out.push(...rows);
+  }
+  return out;
 }
 
 export async function getQuotation(supabase: Client, id: string): Promise<LoadedQuotation | null> {
@@ -120,7 +139,7 @@ export async function getQuotation(supabase: Client, id: string): Promise<Loaded
     preparedBy: q.prepared_by,
     createdBy: q.created_by,
     header: toHeader(q),
-    lines: (items ?? []).map(toLine),
+    lines: withEmptyRows(items ?? []),
   };
 }
 

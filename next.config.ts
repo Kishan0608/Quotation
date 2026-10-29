@@ -18,7 +18,9 @@ const nextConfig: NextConfig = {
   cacheComponents: false,
   poweredByHeader: false,
   reactStrictMode: true,
-  serverExternalPackages: ["exceljs"],
+  // Run in plain Node: exceljs, the PDF reader, the OCR engine (it starts worker threads) and the
+  // image tools used to clean up photos and to turn scanned PDF pages into pictures.
+  serverExternalPackages: ["exceljs", "unpdf", "tesseract.js", "sharp", "@napi-rs/canvas"],
   experimental: {
     serverActions: {
       // Excel imports send up to 2,000 validated rows in one action.

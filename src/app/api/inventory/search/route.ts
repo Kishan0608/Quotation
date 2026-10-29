@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { authorize } from "@/lib/auth/dal";
-import { applyTextSearch } from "@/lib/data/inventory";
+import { applyPrefixSearch, applyTextSearch } from "@/lib/data/inventory";
+import { sizeQuery } from "@/lib/import/match";
 import type { PickerItem } from "@/lib/inventory/types";
 
 const FIELDS = "id, item_code, description, weight_kg, unit_price, stock_qty, note, actual_weight";
@@ -27,16 +28,27 @@ export async function GET(request: NextRequest) {
     applyTextSearch(auth.supabase.from("inventory_items").select(FIELDS, withCount ? { count: "exact" } : undefined), text)
       .order("created_at")
       .order("id");
+  // A size typed the customer's way ("1" B/2.5 MM", "1.1/2" SL/40") also looks for the
+  // inventory's own name (33X2.5MM, 11/2"XSCH40), first.
+  const bySize = (text: string) => {
+    const q = sizeQuery(text);
+    if (!q) return null;
+    return applyTextSearch(applyPrefixSearch(auth.supabase.from("inventory_items").select(FIELDS), q.prefixes), q.words)
+      .order("created_at")
+      .order("id")
+      .limit(200);
+  };
+  const searches = groups.flatMap((g) => [bySize(g), search(g, false).limit(200)]).filter((s) => s != null);
 
-  if (groups.length <= 1) {
+  if (searches.length <= 1) {
     const { data, count, error } = await search(groups[0] ?? "", true).range(offset, offset + limit - 1);
     if (error) return NextResponse.json({ error: "Search failed." }, { status: 500 });
     return NextResponse.json({ items: (data ?? []) as PickerItem[], total: count ?? 0 }, { headers: { "Cache-Control": "private, no-store" } });
   }
 
-  // Several comma-separated searches: run each one (up to 200 matches), keep the typed order,
-  // drop duplicates, then return the requested page.
-  const results = await Promise.all(groups.map((g) => search(g, false).limit(200)));
+  // Several searches (comma-separated, or a size the customer's way): run each one (up to 200
+  // matches), keep the typed order, drop duplicates, then return the requested page.
+  const results = await Promise.all(searches);
   if (results.some((r) => r.error)) return NextResponse.json({ error: "Search failed." }, { status: 500 });
   const seen = new Set<string>();
   const merged: PickerItem[] = [];

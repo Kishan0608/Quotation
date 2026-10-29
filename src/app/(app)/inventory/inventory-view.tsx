@@ -128,9 +128,8 @@ export function InventoryView({ rows: initialRows, total, loadError, filters, ca
           qty: acc.qty + Number(r.stock_qty),
           kg: acc.kg + Number(r.total_weight_kg),
           value: acc.value + Number(r.total_amount),
-          loading: acc.loading + Number(r.loading_charges),
         }),
-        { qty: 0, kg: 0, value: 0, loading: 0 },
+        { qty: 0, kg: 0, value: 0 },
       ),
     [rows],
   );
@@ -164,7 +163,7 @@ export function InventoryView({ rows: initialRows, total, loadError, filters, ca
               </label>
               <div className="relative">
                 <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-slate-400" />
-                <Input id="inv-search" value={search} onChange={(e) => onSearch(e.target.value)} placeholder='Item no., item or note…' className="pl-9" />
+                <Input id="inv-search" value={search} onChange={(e) => onSearch(e.target.value)} placeholder='Item or note…' className="pl-9" />
               </div>
             </div>
           </div>
@@ -220,7 +219,7 @@ export function InventoryView({ rows: initialRows, total, loadError, filters, ca
               }
             />
           ) : (
-            <table className="w-full min-w-[1180px] text-sm">
+            <table className="w-full min-w-[1060px] text-sm">
               <thead className="sticky top-0 z-10 bg-slate-50 text-left text-xs text-slate-500">
                 <tr className="border-b border-slate-200">
                   {sortHeader("Items", "description", "pl-4")}
@@ -229,7 +228,6 @@ export function InventoryView({ rows: initialRows, total, loadError, filters, ca
                   {sortHeader("Quantity", "quantity", "w-28 text-right")}
                   <th className="w-28 px-2 py-2.5 text-right font-medium">Total kg</th>
                   {sortHeader("Amount", "amount", "w-32 text-right")}
-                  {sortHeader("Loading charges", "loading", "w-32 text-right")}
                   <th className="w-40 px-2 py-2.5 font-medium">Actual weight</th>
                   <th className="w-36 px-2 py-2.5 font-medium">Note / Length</th>
                   <th className="w-28 px-3 py-2.5 text-right font-medium">
@@ -254,9 +252,6 @@ export function InventoryView({ rows: initialRows, total, loadError, filters, ca
                     </td>
                     <td className="num px-2 py-1.5 text-right text-slate-600">{fmtWeight(row.total_weight_kg)}</td>
                     <td className="num px-2 py-1.5 text-right font-medium">{fmtMoney(row.total_amount)}</td>
-                    <td className="px-1 py-1.5">
-                      <InlineCell kind="number" label="Loading charges" editable={canEdit} value={row.loading_charges} display={fmtMoney(row.loading_charges)} onSave={(v) => saveField(row, "loading_charges", v ?? 0)} />
-                    </td>
                     <td className="px-1 py-1.5 text-xs">
                       <InlineCell kind="text" align="left" label="Actual weight" editable={canEdit} value={row.actual_weight} display={row.actual_weight ?? ""} onSave={(v) => saveField(row, "actual_weight", v)} />
                     </td>
@@ -289,7 +284,6 @@ export function InventoryView({ rows: initialRows, total, loadError, filters, ca
                   <td className="num px-3 py-2.5 text-right">{fmtQty(pageTotals.qty)}</td>
                   <td className="num px-2 py-2.5 text-right">{fmtWeight(pageTotals.kg)}</td>
                   <td className="num px-2 py-2.5 text-right">{fmtMoney(pageTotals.value)}</td>
-                  <td className="num px-3 py-2.5 text-right">{fmtMoney(pageTotals.loading)}</td>
                   <td colSpan={3} />
                 </tr>
               </tfoot>
