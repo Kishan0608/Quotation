@@ -27,7 +27,7 @@ function done() {
 }
 
 export async function savePipeSize(id: unknown, input: unknown): Promise<ActionResult<PipeSizeRow>> {
-  const auth = await authorize("admin");
+  const auth = await authorize();
   if (!auth.ok) return auth;
   const parsed = sizeSchema.safeParse(input);
   if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid size." };
@@ -46,7 +46,7 @@ export async function savePipeSize(id: unknown, input: unknown): Promise<ActionR
 }
 
 export async function deletePipeSize(id: unknown): Promise<ActionResult> {
-  const auth = await authorize("admin");
+  const auth = await authorize();
   if (!auth.ok) return auth;
   const sizeId = z.coerce.number().int().positive().safeParse(id);
   if (!sizeId.success) return { ok: false, error: "Invalid size." };

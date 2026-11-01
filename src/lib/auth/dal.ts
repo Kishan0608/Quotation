@@ -2,14 +2,11 @@ import "server-only";
 import { cache } from "react";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
-import type { AppRole } from "@/lib/supabase/database.types";
-import { hasRole } from "./roles";
 
 export type SessionUser = {
   id: string;
   email: string;
   fullName: string | null;
-  role: AppRole;
 };
 
 type SessionState = { user: SessionUser | null; signedIn: boolean; databaseReady: boolean };
@@ -28,14 +25,14 @@ const loadSession = cache(async (): Promise<SessionState> => {
 
   const { data: profile, error: profileError } = await supabase
     .from("profiles")
-    .select("id, email, full_name, role, is_active")
+    .select("id, email, full_name, is_active")
     .eq("id", userId)
     .maybeSingle();
 
   const databaseReady = !isMissingTable(profileError);
   if (!profile || !profile.is_active) return { user: null, signedIn: true, databaseReady };
   return {
-    user: { id: profile.id, email: profile.email, fullName: profile.full_name, role: profile.role },
+    user: { id: profile.id, email: profile.email, fullName: profile.full_name },
     signedIn: true,
     databaseReady,
   };
@@ -59,13 +56,10 @@ export type ActionResult<T = undefined> =
   | { ok: true; data: T; message?: string }
   | { ok: false; error: string; fieldErrors?: Record<string, string> };
 
-/** For Server Actions and Route Handlers: re-verifies the caller every time. */
-export async function authorize(minimum: AppRole) {
+/** For Server Actions and Route Handlers: re-verifies the caller (signed in, active) every time. */
+export async function authorize() {
   const user = await getSessionUser();
   if (!user) return { ok: false as const, error: "Your session has expired. Please sign in again." };
-  if (!hasRole(user.role, minimum)) {
-    return { ok: false as const, error: "You do not have permission to perform this action." };
-  }
   const supabase = await createClient();
   return { ok: true as const, user, supabase };
 }

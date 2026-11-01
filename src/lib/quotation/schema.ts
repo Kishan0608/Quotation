@@ -63,7 +63,8 @@ export const quoteHeaderSchema = z
     customer_address: optText(500),
     currency: currencyCode,
     exchange_rate: reqNum(0.000001, 1_000_000),
-    margin_pct: reqNum(-100, 1000, 0),
+    // The commission %: customer price = China price / (1 - commission).
+    margin_pct: reqNum(0, 95, 0),
     pricing_basis: z.enum(["piece", "kg"]),
     rate_per_kg: optNum(0, 10_000_000),
     adjustments: z.array(adjustmentSchema).max(MAX_ADJUSTMENTS, `At most ${MAX_ADJUSTMENTS} bill lines`),
@@ -110,6 +111,15 @@ export const quoteLineSchema = z.object({
   fmt: z
     .record(z.string().regex(/^(x:[a-z0-9]{1,24}|[a-z_]{2,20})$/i), cellFmtSchema)
     .refine((o) => Object.keys(o).length <= 40, "Too many formatted cells in one row"),
+  /** Total KG / Total Amount / Final Total typed over the calculation. */
+  overrides: z
+    .object({
+      total_weight: z.number().min(0).max(100_000_000_000).optional(),
+      amount: z.number().min(0).max(100_000_000_000).optional(),
+      net: z.number().min(0).max(100_000_000_000).optional(),
+    })
+    .strict()
+    .optional(),
 });
 
 export const saveQuotationSchema = z

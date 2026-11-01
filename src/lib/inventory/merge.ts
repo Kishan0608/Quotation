@@ -1,6 +1,7 @@
 import type { InventoryInput } from "./schema";
 
-const norm = (s: string | null | undefined) => (s ?? "").toUpperCase().replace(/[\s()（）]/g, "");
+/** An item name (or note) compared the way the import compares them: case, spaces and brackets ignored. */
+export const norm = (s: string | null | undefined) => (s ?? "").toUpperCase().replace(/[\s()（）]/g, "");
 
 /**
  * The length / note that tells items of the same name apart ("440MM", "STANDARD", "CONCENTRIC",
@@ -22,7 +23,7 @@ export function itemKey(description: string, note?: string | null) {
   return `${norm(description)}|${lengthOf(note) ?? ""}`;
 }
 
-export type ExistingItem = { id: string; item_code: string | null; description: string; note: string | null; unit_price: number | null };
+export type ExistingItem = { id: string; description: string; note: string | null; unit_price: number | null };
 
 export type ImportPlan = {
   /** New items, one row each (a later row of the same item only changes its price). */
@@ -35,9 +36,9 @@ export type ImportPlan = {
 };
 
 /**
- * The inventory item(s) a sheet row is: same name and length. When the row has no length, its
- * Item no. decides, or the name alone when every item of that name has the same length. When
- * the inventory has no length for the item, the name decides.
+ * The inventory item(s) a sheet row is: same name and length. When the row has no length, the
+ * name alone decides when every item of that name has the same length (else it is a new item).
+ * When the inventory has no length for the item, the name decides.
  */
 function sameItems(row: InventoryInput, byName: Map<string, ExistingItem[]>): ExistingItem[] {
   const named = byName.get(norm(row.description)) ?? [];
@@ -47,10 +48,14 @@ function sameItems(row: InventoryInput, byName: Map<string, ExistingItem[]>): Ex
     const exact = named.filter((e) => lengthOf(e.note) === length);
     return exact.length ? exact : named.filter((e) => lengthOf(e.note) == null);
   }
-  const code = norm(row.item_code);
-  const byCode = code ? named.filter((e) => norm(e.item_code) === code) : [];
-  if (byCode.length) return byCode;
   return new Set(named.map((e) => lengthOf(e.note))).size === 1 ? named : [];
+}
+
+/** For each row, the inventory item(s) it is (same name and length); empty = a new item. */
+export function existingFor(rows: InventoryInput[], existing: ExistingItem[]): ExistingItem[][] {
+  const byName = new Map<string, ExistingItem[]>();
+  for (const e of existing) byName.set(norm(e.description), [...(byName.get(norm(e.description)) ?? []), e]);
+  return rows.map((row) => sameItems(row, byName));
 }
 
 /**
@@ -86,7 +91,7 @@ export function planImport(rows: InventoryInput[], existing: ExistingItem[]): Im
     } else {
       newItems.push(row);
       const name = norm(row.description);
-      const entry = { id: String(newItems.length - 1), item_code: row.item_code ?? null, description: row.description, note: row.note ?? null, unit_price: null };
+      const entry = { id: String(newItems.length - 1), description: row.description, note: row.note ?? null, unit_price: null };
       newByName.set(name, [...(newByName.get(name) ?? []), entry]);
     }
   }

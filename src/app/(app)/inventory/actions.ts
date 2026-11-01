@@ -4,8 +4,10 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { authorize, type ActionResult } from "@/lib/auth/dal";
 import { dbErrorMessage } from "@/lib/data/errors";
-import { type ExistingItem, planImport } from "@/lib/inventory/merge";
-import { inlineUpdateSchema, inventoryItemSchema, MAX_IMPORT_ROWS } from "@/lib/inventory/schema";
+import { readPriceText, MAX_TEXT_CHARS } from "@/lib/inventory/ai-text";
+import { cleanActualWeight, cleanNote, cleanSupplierText } from "@/lib/inventory/clean-text";
+import { existingFor, type ExistingItem, planImport } from "@/lib/inventory/merge";
+import { inlineUpdateSchema, inventoryItemSchema, MAX_IMPORT_ROWS, type InventoryInput } from "@/lib/inventory/schema";
 import type { InventoryItemInsert, InventoryItemRow } from "@/lib/supabase/database.types";
 import { fieldErrors, uuidSchema } from "@/lib/validation";
 
@@ -15,7 +17,7 @@ function done() {
 }
 
 export async function createInventoryItem(input: unknown): Promise<ActionResult<InventoryItemRow>> {
-  const auth = await authorize("editor");
+  const auth = await authorize();
   if (!auth.ok) return auth;
   const parsed = inventoryItemSchema.safeParse(input);
   if (!parsed.success) return { ok: false, error: "Please fix the highlighted fields.", fieldErrors: fieldErrors(parsed.error) };
@@ -27,17 +29,14 @@ export async function createInventoryItem(input: unknown): Promise<ActionResult<
 }
 
 export async function updateInventoryItem(id: unknown, input: unknown): Promise<ActionResult<InventoryItemRow>> {
-  const auth = await authorize("editor");
+  const auth = await authorize();
   if (!auth.ok) return auth;
   const itemId = uuidSchema.safeParse(id);
   if (!itemId.success) return { ok: false, error: "Invalid item." };
   const parsed = inventoryItemSchema.safeParse(input);
   if (!parsed.success) return { ok: false, error: "Please fix the highlighted fields.", fieldErrors: fieldErrors(parsed.error) };
 
-  // Item numbers are not shown or edited any more; the one stored stays as it is.
-  const fields: Partial<typeof parsed.data> = { ...parsed.data };
-  delete fields.item_code;
-  const { data, error } = await auth.supabase.from("inventory_items").update(fields).eq("id", itemId.data).select("*").maybeSingle();
+  const { data, error } = await auth.supabase.from("inventory_items").update(parsed.data).eq("id", itemId.data).select("*").maybeSingle();
   if (error) return { ok: false, error: dbErrorMessage(error) };
   if (!data) return { ok: false, error: "The item was not found or you cannot edit it." };
   done();
@@ -45,7 +44,7 @@ export async function updateInventoryItem(id: unknown, input: unknown): Promise<
 }
 
 export async function updateInventoryField(id: unknown, field: unknown, value: unknown): Promise<ActionResult<InventoryItemRow>> {
-  const auth = await authorize("editor");
+  const auth = await authorize();
   if (!auth.ok) return auth;
   const itemId = uuidSchema.safeParse(id);
   const parsed = inlineUpdateSchema.safeParse({ field, value });
@@ -64,7 +63,7 @@ export async function updateInventoryField(id: unknown, field: unknown, value: u
 }
 
 export async function deleteInventoryItems(ids: unknown): Promise<ActionResult<{ deleted: number }>> {
-  const auth = await authorize("editor");
+  const auth = await authorize();
   if (!auth.ok) return auth;
   const parsed = z.array(uuidSchema).min(1).max(500).safeParse(ids);
   if (!parsed.success) return { ok: false, error: "Select between 1 and 500 items." };
@@ -82,25 +81,80 @@ const importSchema = z.object({
 
 type ImportSummary = { inserted: number; updated: number; unchanged: number };
 
+async function loadExisting(supabase: Extract<Awaited<ReturnType<typeof authorize>>, { ok: true }>["supabase"]) {
+  const existing: ExistingItem[] = [];
+  for (let from = 0; from < 50_000; from += 1000) {
+    const { data, error } = await supabase.from("inventory_items").select("id, description, note, unit_price").order("created_at").order("id").range(from, from + 999);
+    if (error) return { existing, error };
+    existing.push(...(data ?? []));
+    if (!data || data.length < 1000) break;
+  }
+  return { existing, error: null };
+}
+
+export type TextImportRow = {
+  /** Its place in the message (1 = first item). */
+  row: number;
+  /** The item as the message wrote it. */
+  source: string;
+  data: InventoryInput;
+  /** The inventory price it replaces; undefined = a new item. */
+  was?: number | null;
+  /** What the AI found unclear. */
+  problem?: string;
+};
+
+/**
+ * A supplier's price message (chat text, a list) read by the AI into inventory lines, each marked
+ * as a price update of an item already in inventory or as a new item. Nothing is saved here.
+ */
+export async function readInventoryText(input: unknown): Promise<ActionResult<{ rows: TextImportRow[]; skipped: { row: number; message: string }[] }>> {
+  const auth = await authorize();
+  if (!auth.ok) return auth;
+  const text = z.string().trim().min(1, "Paste the message first.").max(MAX_TEXT_CHARS, "The message is too long: paste it in parts.").safeParse(input);
+  if (!text.success) return { ok: false, error: text.error.issues[0]?.message ?? "Invalid text." };
+
+  const { existing, error } = await loadExisting(auth.supabase);
+  if (error) return { ok: false, error: dbErrorMessage(error) };
+  let items;
+  try {
+    items = await readPriceText(text.data, existing);
+  } catch (e) {
+    console.error("inventory text: AI reader failed:", (e instanceof Error ? e.message : String(e)).slice(0, 200));
+    return { ok: false, error: "The AI reader could not read the message right now. Try again in a moment." };
+  }
+  if (!items) return { ok: false, error: "The AI reader is not set up (GEMINI_API_KEY), so text can't be read. Use an Excel file." };
+
+  const rows: TextImportRow[] = [];
+  const skipped: { row: number; message: string }[] = [];
+  items.forEach((item, i) => {
+    const parsed = inventoryItemSchema.safeParse({
+      description: cleanSupplierText(item.name),
+      weight_kg: item.weight_kg,
+      unit_price: item.price,
+      stock_qty: item.qty ?? 0,
+      actual_weight: cleanActualWeight(item.actual_weight),
+      note: cleanNote(item.note),
+    });
+    if (!parsed.success) skipped.push({ row: i + 1, message: `${item.source.slice(0, 80)}: ${parsed.error.issues[0]?.message ?? "invalid"}` });
+    else rows.push({ row: i + 1, source: item.source.slice(0, 200), data: parsed.data, ...(item.problem ? { problem: item.problem.slice(0, 200) } : {}) });
+  });
+  const matches = existingFor(rows.map((r) => r.data), existing);
+  rows.forEach((r, i) => {
+    if (matches[i].length) r.was = matches[i][0].unit_price;
+  });
+  return { ok: true, data: { rows, skipped } };
+}
+
 /** New items are added; items already in inventory only get their price updated. */
 export async function importInventoryItems(input: unknown): Promise<ActionResult<ImportSummary>> {
-  const auth = await authorize("editor");
+  const auth = await authorize();
   if (!auth.ok) return auth;
   const parsed = importSchema.safeParse(input);
   if (!parsed.success) return { ok: false, error: `Import rejected: ${parsed.error.issues[0]?.message ?? "invalid data"}` };
 
-  const existing: ExistingItem[] = [];
-  for (let from = 0; from < 50_000; from += 1000) {
-    const { data, error } = await auth.supabase
-      .from("inventory_items")
-      .select("id, item_code, description, note, unit_price")
-      .order("created_at")
-      .order("id")
-      .range(from, from + 999);
-    if (error) return { ok: false, error: dbErrorMessage(error) };
-    existing.push(...(data ?? []));
-    if (!data || data.length < 1000) break;
-  }
+  const { existing, error: loadError } = await loadExisting(auth.supabase);
+  if (loadError) return { ok: false, error: dbErrorMessage(loadError) };
 
   const plan = planImport(parsed.data.rows, existing);
 

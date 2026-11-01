@@ -69,7 +69,7 @@ One entry in "lines" for every item asked for, in the document's order. Skip hea
 - source: the item as written in the document, without the quantity (at most 200 characters). If only a heading above it says what kind it is, add that in brackets: "2" B/3 MM (MS ELBOW)".
 - qty: how many pieces are asked for (QTY, NOS, PCS, pieces, sets; "QTY-2pcs" = 2). Never a price, amount, weight, size, length or row number. null when not given.
 - qty_sure: false when the quantity is unclear (hard to read, could be another column, or given in metres, kg or tons instead of pieces).
-- length: a length asked for ("300MM", "6 MTR", "Standard"), or for a reducer CONCENTRIC / ECCENTRIC; else null. STD, XS and SCH are walls, never a length.
+- length: a length the document writes for the item ("300MM", "6 MTR", "Standard"), or for a reducer CONCENTRIC / ECCENTRIC; else null. Never fill one in that the document doesn't write (no "Standard" by default). STD, XS and SCH are walls, never a length.
 - note: what else the customer asks for that is not in the inventory item's name: material and grade, standard, ends, coating, marking ("ASTM A182 F316L, ASME B16.5", "galvanised", "B CLASS"); else null. Don't repeat the size, wall, schedule, kind, angle, class or facing.
 In a table, read the columns by their headings: the item cell (and its code), QTY for qty, LENGTH or NOTE for the length or note. Prices, weights and amounts are not quantities.
 - size_inch: the main (largest) size of the item in inches NPS, e.g. "4", "1 1/2", "20"; null without a size.
@@ -85,7 +85,8 @@ export function systemInstruction(catalog: Catalog): string {
 }
 
 /** Lines per request for long text and tables; the parts are read side by side. */
-export const CHUNK_LINES = 30;
+// 60 lines a request: fewer requests under the free per-minute limit.
+export const CHUNK_LINES = 60;
 
 /** A line that heads a block ("MS ELBOW", "REDUCER CONCENTRIC"): words only, no size. */
 const isHeading = (l: string) => !/\d/.test(l) && /[a-z]{3}/i.test(l) && l.split(/\s+/).length <= 6;

@@ -3,7 +3,6 @@ import { optNum, optText, reqNum, reqText } from "../validation";
 
 /** One inventory item: the columns of the supplier Excel. */
 export const inventoryItemSchema = z.object({
-  item_code: optText(40),
   description: reqText(200, "Items"),
   weight_kg: optNum(0, 100_000_000),
   unit_price: optNum(0, 100_000_000_000),

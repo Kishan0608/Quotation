@@ -9,7 +9,7 @@ export const dynamic = "force-dynamic";
 // The AI read (up to 80 s for long lists) and, when it fails, reading a photo with OCR can take a while.
 export const maxDuration = 120;
 
-const FIELDS = "id, item_code, description, weight_kg, unit_price, stock_qty, note, actual_weight";
+const FIELDS = "id, description, weight_kg, unit_price, stock_qty, note, actual_weight";
 const NO_STORE = { "Cache-Control": "private, no-store" };
 
 /**
@@ -18,7 +18,7 @@ const NO_STORE = { "Cache-Control": "private, no-store" };
  * the matches for review before they go on the sheet.
  */
 export async function POST(request: NextRequest) {
-  const auth = await authorize("editor");
+  const auth = await authorize();
   if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: 401, headers: NO_STORE });
 
   let file: File | null = null;

@@ -27,8 +27,24 @@ const settingsSchema = z.object({
   footer_note: optText(300),
 });
 
+/** A small PNG (made in the browser from the uploaded picture), or null to remove the signature. */
+const signatureSchema = z.union([z.null(), z.string().max(400_000, "The signature picture is too large.").regex(/^data:image\/png;base64,[A-Za-z0-9+/]+=*$/, "Upload a PNG or JPG picture.")]);
+
+export async function updateSignature(input: unknown): Promise<ActionResult> {
+  const auth = await authorize();
+  if (!auth.ok) return auth;
+  const parsed = signatureSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid picture." };
+
+  const { data, error } = await auth.supabase.from("company_settings").update({ signature_image: parsed.data }).eq("id", true).select("id").maybeSingle();
+  if (error) return { ok: false, error: dbErrorMessage(error) };
+  if (!data) return { ok: false, error: "Settings row not found. Re-run the database migration." };
+  revalidatePath("/", "layout");
+  return { ok: true, data: undefined, message: parsed.data ? "Signature saved. It now prints on your quotations." : "Signature removed." };
+}
+
 export async function updateCompanySettings(input: unknown): Promise<ActionResult> {
-  const auth = await authorize("admin");
+  const auth = await authorize();
   if (!auth.ok) return auth;
   const parsed = settingsSchema.safeParse(input);
   if (!parsed.success) return { ok: false, error: "Please fix the highlighted fields.", fieldErrors: fieldErrors(parsed.error) };

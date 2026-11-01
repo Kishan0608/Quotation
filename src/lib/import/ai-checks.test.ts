@@ -5,7 +5,6 @@ import { conflict, kindOf, type Asked } from "./ai-checks";
 
 const item = (description: string, note: string | null = null): PickerItem => ({
   id: description,
-  item_code: null,
   description,
   weight_kg: null,
   unit_price: null,

@@ -7,7 +7,7 @@ import { dbErrorMessage } from "@/lib/data/errors";
 import { fieldErrors, optText } from "@/lib/validation";
 
 export async function updateProfileName(input: unknown): Promise<ActionResult> {
-  const auth = await authorize("viewer");
+  const auth = await authorize();
   if (!auth.ok) return auth;
   const parsed = z.object({ full_name: optText(120) }).safeParse(input);
   if (!parsed.success) return { ok: false, error: "Name must be 120 characters or fewer." };
@@ -31,7 +31,7 @@ const passwordSchema = z
   .refine((v) => v.new_password === v.confirm_password, { message: "Passwords do not match", path: ["confirm_password"] });
 
 export async function changePassword(input: unknown): Promise<ActionResult> {
-  const auth = await authorize("viewer");
+  const auth = await authorize();
   if (!auth.ok) return auth;
   const parsed = passwordSchema.safeParse(input);
   if (!parsed.success) return { ok: false, error: "Please fix the highlighted fields.", fieldErrors: fieldErrors(parsed.error) };

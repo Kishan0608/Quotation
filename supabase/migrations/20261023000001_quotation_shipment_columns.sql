@@ -47,6 +47,12 @@ alter table public.quotation_items
   add column if not exists fmt jsonb not null default '{}'::jsonb
     check (jsonb_typeof(fmt) = 'object' and length(fmt::text) <= 20000);
 
+-- Total KG / Total Amount / Final Total typed over their calculation on the sheet (like typing
+-- over a formula in Excel), e.g. {"amount": 1250}. The quotation totals use them.
+alter table public.quotation_items
+  add column if not exists overrides jsonb not null default '{}'::jsonb
+    check (jsonb_typeof(overrides) = 'object');
+
 create or replace function public.save_quotation(p_id uuid, p_header jsonb, p_items jsonb)
 returns jsonb
 language plpgsql
@@ -232,7 +238,7 @@ begin
   insert into public.quotation_items (
     quotation_id, position, inventory_item_id, item_code, description,
     unit, qty, unit_weight_kg, base_price, unit_price, price_overridden, remarks,
-    actual_weight, sheet, extra, fmt, row_index
+    actual_weight, sheet, extra, fmt, row_index, overrides
   )
   select
     v_id,
@@ -258,12 +264,20 @@ begin
     -- Formatting is validated by the app; here only its shape and size are checked.
     case when jsonb_typeof(e.item -> 'fmt') = 'object' and length((e.item -> 'fmt')::text) <= 20000
          then e.item -> 'fmt' else '{}'::jsonb end,
-    case when coalesce(e.item ->> 'row', '') ~ '^\d{1,4}$' then (e.item ->> 'row')::integer end
+    case when coalesce(e.item ->> 'row', '') ~ '^\d{1,4}$' then (e.item ->> 'row')::integer end,
+    -- Typed totals: the three known cells, numbers from 0 up only.
+    (select coalesce(jsonb_object_agg(o.key, round((o.value #>> '{}')::numeric, case when o.key = 'total_weight' then 3 else 2 end)), '{}'::jsonb)
+       from jsonb_each(case when jsonb_typeof(e.item -> 'overrides') = 'object' then e.item -> 'overrides' else '{}'::jsonb end) o
+      where o.key in ('total_weight', 'amount', 'net') and jsonb_typeof(o.value) = 'number'
+        and (o.value #>> '{}')::numeric between 0 and 100000000000)
   from jsonb_array_elements(p_items) with ordinality as e (item, ord);
 
   -- Totals: amounts of the lines (RMB) -> x exchange rate -> discounts -> charges
   -- -> taxes (on the taxable amount), all in the quotation currency.
-  select coalesce(sum(qi.qty), 0), coalesce(sum(qi.total_weight_kg), 0), coalesce(sum(qi.amount), 0)
+  -- A typed Total KG / Final Total (or Total Amount) counts instead of the calculation.
+  select coalesce(sum(qi.qty), 0),
+         coalesce(sum(coalesce((qi.overrides ->> 'total_weight')::numeric, qi.total_weight_kg)), 0),
+         coalesce(sum(coalesce((qi.overrides ->> 'net')::numeric, (qi.overrides ->> 'amount')::numeric, qi.amount)), 0)
     into v_tq, v_tw, v_base
   from public.quotation_items qi
   where qi.quotation_id = v_id;

@@ -13,6 +13,7 @@ import {
   CopyPlus,
   Eraser,
   Eye,
+  ListFilter,
   Pencil,
   Plus,
   Redo2,
@@ -44,9 +45,12 @@ import {
   fmtWeight,
   parseNumber,
   round2,
+  round3,
 } from "@/lib/format";
 import {
   autoUnitPrice,
+  calcAmount,
+  calcWeight,
   isBlankLine,
   lineAmount,
   lineNet,
@@ -75,11 +79,15 @@ import {
   type HideableColumn,
   type ColumnLayoutPatch,
   type QuoteHeader,
+  type LineOverrides,
   type QuoteLine,
   type QuoteTotals,
 } from "@/lib/quotation/types";
 import { useLocalStorage, writeLocalStorage } from "@/lib/use-local-storage";
-import { blankLine, newKey } from "./line-utils";
+import type { PickerItem } from "@/lib/inventory/types";
+import { ItemSuggestList, useItemSuggestions } from "./item-suggest";
+import { SheetFilterMenu, type FilterValue } from "./sheet-filter";
+import { blankLine, lineFromItem, newKey } from "./line-utils";
 import { RibbonGroup, SheetRibbon } from "./sheet-ribbon";
 
 type BuiltinId =
@@ -137,7 +145,7 @@ function columns(currency: string): Col[] {
     b("qty", "QTY", 84, "number", "right"),
     b("total_weight", "Total KG", 104, "computed", "right"),
     b("amount", "Total Amount", 124, "computed", "right"),
-    b("remarks", "Length", 104, "text", "left"),
+    b("remarks", "Note / Length", 130, "text", "left"),
     b("net", "Final Total", 128, "computed", "right"),
   ];
 }
@@ -195,13 +203,15 @@ function displayValue(line: QuoteLine, col: Col): string {
     case "unit_price":
       return line.unit_price == null ? "" : fmtMoney(line.unit_price);
     case "total_weight":
-      return line.unit_weight_kg == null ? "" : fmtWeight(lineWeight(line));
+      return line.unit_weight_kg == null && line.overrides?.total_weight == null ? "" : fmtWeight(lineWeight(line));
     case "amount":
-      return line.qty == null && line.unit_price == null
+      return line.qty == null && line.unit_price == null && line.overrides?.amount == null
         ? ""
         : fmtMoney(lineAmount(line));
     case "net":
-      return line.qty == null && line.unit_price == null ? "" : fmtMoney(lineNet(line));
+      return line.qty == null && line.unit_price == null && line.overrides?.net == null && line.overrides?.amount == null
+        ? ""
+        : fmtMoney(lineNet(line));
     default:
       return rawValue(line, col);
   }
@@ -267,6 +277,19 @@ function applyEdit(
           next.unit_price = autoUnitPrice(next, header) ?? next.unit_price;
         return next;
       }
+      // Typed over the calculation (Excel: a value replaces the formula); empty = calculate again.
+      case "total_weight":
+      case "amount":
+      case "net": {
+        const key = col.builtin;
+        const n = num();
+        const overrides = { ...line.overrides };
+        const calculated = key === "total_weight" ? calcWeight(line) : key === "amount" ? calcAmount(line) : lineAmount(line);
+        const value = n == null ? null : key === "total_weight" ? round3(n) : round2(n);
+        if (value == null || value === calculated) delete overrides[key];
+        else overrides[key] = value;
+        return { ...line, overrides };
+      }
       case "unit_price": {
         const n = num();
         if (n == null)
@@ -314,7 +337,8 @@ type Props = {
   header: QuoteHeader;
   totals: QuoteTotals;
   readOnly: boolean;
-  highlightKey: string | null;
+  /** A line to flash briefly (none when not given). */
+  highlightKey?: string | null;
   onUndo: () => void;
   onRedo: () => void;
   canUndo: boolean;
@@ -324,6 +348,8 @@ type Props = {
   activeSheet: number;
   onSelectSheet: (i: number) => void;
   onAddSheet: () => void;
+  /** Total KG / Total Amount / Final Total can't be typed over (the China sheet). */
+  lockTotals?: boolean;
   onRenameSheet: (i: number, name: string) => void;
   onDeleteSheet: (i: number) => void;
   /** Extra columns added/renamed/deleted, or standard columns deleted (hidden) / shown again. */
@@ -352,6 +378,7 @@ export function SheetGrid({
   activeSheet,
   onSelectSheet,
   onAddSheet,
+  lockTotals = false,
   onRenameSheet,
   onDeleteSheet,
   onColumnsChange,
@@ -455,6 +482,71 @@ export function SheetGrid({
     }),
     [rowCount, cols.length],
   );
+
+  // ---- Filters (Excel's AutoFilter) --------------------------------------------------
+  // The values shown per column. Like Excel, a filter hides rows when it is applied (a row
+  // being edited doesn't vanish); nothing is deleted and the totals still count every line.
+  const [filters, setFilters] = useState<Record<string, string[]>>({});
+  const [hiddenKeys, setHiddenKeys] = useState<Set<string>>(() => new Set());
+  const [filterMenu, setFilterMenu] = useState<{ c: number; style: CSSProperties } | null>(null);
+  const isNumericCol = (col: Col) => col.kind === "number" || col.kind === "computed";
+  const shownText = (line: QuoteLine, col: Col) => displayValue(line, col).trim();
+  const applyFilters = (next: Record<string, string[]>) => {
+    setFilters(next);
+    const active = Object.entries(next)
+      .map(([id, shown]) => [cols.find((c) => c.id === id), new Set(shown)] as const)
+      .filter((x): x is readonly [Col, Set<string>] => x[0] != null);
+    setHiddenKeys(new Set(lines.filter((line) => active.some(([col, shown]) => !shown.has(shownText(line, col)))).map((l) => l.key)));
+  };
+  const hiddenRows = useMemo(() => {
+    const rows = new Set<number>();
+    lines.forEach((l, r) => hiddenKeys.has(l.key) && rows.add(r));
+    return rows;
+  }, [lines, hiddenKeys]);
+  const filtering = Object.keys(filters).length > 0;
+  /** The row to move to in `dir`, skipping rows a filter hides (stays at `from` if every row that way is hidden). */
+  const visibleRow = (to: number, dir: number, from: number) => {
+    let r = to;
+    while (hiddenRows.has(r) && r > 0 && r < rowCount - 1) r += dir < 0 ? -1 : 1;
+    return hiddenRows.has(r) ? from : r;
+  };
+
+  /** The column's values for the filter list: as shown, numbers in number order, blanks last. */
+  const filterValues = (col: Col): FilterValue[] => {
+    const seen = new Map<string, { count: number; n: number | null }>();
+    for (const line of lines) {
+      const text = shownText(line, col);
+      const entry = seen.get(text);
+      if (entry) entry.count++;
+      else seen.set(text, { count: 1, n: isNumericCol(col) ? parseNumber(rawValue(line, col)) : null });
+    }
+    return [...seen.entries()]
+      .sort(([a, x], [b, y]) =>
+        a === "" ? 1 : b === "" ? -1 : x.n != null && y.n != null ? x.n - y.n : a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" }),
+      )
+      .map(([text, { count }]) => ({ text, count }));
+  };
+
+  /** Sorts the sheet's lines by a column (Excel's Sort A to Z / Z to A); empty rows go last. Undo puts it back. */
+  const sortBy = (c: number, dir: "asc" | "desc") => {
+    const col = cols[c];
+    const numeric = isNumericCol(col);
+    const key = (l: QuoteLine) => (numeric ? parseNumber(rawValue(l, col)) : shownText(l, col) || null);
+    const filled = lines.filter((l) => !isBlankLine(l));
+    const sorted = [...filled].sort((a, b) => {
+      const x = key(a);
+      const y = key(b);
+      if (x == null || y == null) return x == null && y == null ? 0 : x == null ? 1 : -1;
+      const cmp = typeof x === "number" && typeof y === "number" ? x - y : String(x).localeCompare(String(y), undefined, { numeric: true, sensitivity: "base" });
+      return dir === "asc" ? cmp : -cmp;
+    });
+    onChange(sorted);
+    setFilterMenu(null);
+  };
+
+  /** Opens the sort & filter menu of column `c` where the right-click menu was. */
+  const openFilter = (c: number, x: number, y: number) =>
+    setFilterMenu({ c, style: { left: Math.max(8, Math.min(x, window.innerWidth - 264)), top: Math.max(8, Math.min(y, window.innerHeight - 440)) } });
   // Rows/columns can disappear (deleted), so the selection is always read clamped to the sheet.
   const sel = clampPos(selRaw.r, selRaw.c);
   const anchor = clampPos(anchorRaw.r, anchorRaw.c);
@@ -503,6 +595,8 @@ export function SheetGrid({
   }, [followKey]);
 
   const focusGrid = () => gridRef.current?.focus({ preventScroll: true });
+  /** The fx bar: typing there edits the selected cell, like Excel's formula bar. */
+  const barRef = useRef<HTMLInputElement>(null);
 
   // Tell the page which row is selected once the user has moved the selection.
   const cursorReported = useRef(false);
@@ -537,7 +631,7 @@ export function SheetGrid({
       const letter = sheetColLetter(cursor.c);
       return `=SUM(${letter}2:${letter}${sheetRow(lines.length - 1)})`;
     }
-    if (currentLine && col.kind === "computed")
+    if (currentLine && col.kind === "computed" && currentLine.overrides?.[col.id as keyof LineOverrides] == null)
       return (
         formulaFor(col.id, sheetRow(cursor.r), letterOf) ??
         cellRaw(cursor.r, cursor.c)
@@ -545,8 +639,8 @@ export function SheetGrid({
     return cellRaw(cursor.r, cursor.c);
   })();
 
-  const isEditableCol = (c: number) =>
-    cols[c].kind !== "computed" && cols[c].kind !== "index";
+  // Every cell but the row numbers: Total KG / Total Amount / Final Total take a typed value too.
+  const isEditableCol = (c: number) => cols[c].kind !== "index" && !(lockTotals && cols[c].kind === "computed");
   const isEditable = (r: number, c: number) =>
     !readOnly && r !== totalRowIndex && isEditableCol(c);
 
@@ -608,7 +702,8 @@ export function SheetGrid({
       }
       if (next !== lines) onChange(next);
     }
-    const target = move ? clampPos(editing.r + move.dr, editing.c + move.dc) : { r: editing.r, c: editing.c };
+    const moved = move ? clampPos(editing.r + move.dr, editing.c + move.dc) : { r: editing.r, c: editing.c };
+    const target = move?.dr ? { ...moved, r: visibleRow(moved.r, move.dr, editing.r) } : moved;
     setEditing(null);
     select(target);
     if (refocus) requestAnimationFrame(focusGrid);
@@ -617,6 +712,83 @@ export function SheetGrid({
   const cancel = () => {
     setEditing(null);
     requestAnimationFrame(focusGrid);
+  };
+
+  // ---- Inventory suggestions while typing in an Items cell ------------------------------
+  const descCol = cols.findIndex((col) => col.builtin === "description");
+  const suggest = useItemSuggestions(editing && editing.source === "cell" && editing.c === descCol ? editing.value : null);
+  /** The highlighted suggestion (-1 = none: Enter keeps the typed text) and Esc-closed, per typed text. */
+  const [suggestRaw, setSuggestState] = useState({ q: "", active: -1, closed: false });
+  const suggestState = suggestRaw.q === suggest.query ? suggestRaw : { q: suggest.query, active: -1, closed: false };
+  const suggestOpen = suggest.query !== "" && !suggestState.closed && (suggest.items.length > 0 || suggest.loading || suggest.done);
+  const [suggestPos, setSuggestPos] = useState<CSSProperties | null>(null);
+  useEffect(() => {
+    if (!suggestOpen) return;
+    // Under the cell (above it near the bottom of the window), following the sheet as it scrolls.
+    const place = () => {
+      const el = gridRef.current?.querySelector<HTMLElement>("[data-cell-editor]");
+      if (!el) return;
+      const rect = el.getBoundingClientRect();
+      const width = Math.max(rect.width, 400);
+      const left = Math.max(8, Math.min(rect.left, window.innerWidth - width - 8));
+      const below = window.innerHeight - rect.bottom;
+      // About eight items high; the rest scroll inside the list.
+      const cap = 380;
+      setSuggestPos(
+        below >= 240 || below >= rect.top
+          ? { left, width, top: rect.bottom + 2, maxHeight: Math.min(cap, below - 12) }
+          : { left, width, bottom: window.innerHeight - rect.top + 2, maxHeight: Math.min(cap, rect.top - 12) },
+      );
+    };
+    const raf = requestAnimationFrame(place);
+    window.addEventListener("scroll", place, true);
+    window.addEventListener("resize", place);
+    return () => {
+      cancelAnimationFrame(raf);
+      window.removeEventListener("scroll", place, true);
+      window.removeEventListener("resize", place);
+    };
+  }, [suggestOpen, editing?.r, editing?.c]);
+
+  /** The chosen inventory item fills the row (its quantity kept), then the Quantity cell is selected. */
+  const pickSuggestion = (item: PickerItem) => {
+    if (!editing) return;
+    const { r, c } = editing;
+    const existing = r < lines.length ? lines[r] : null;
+    const fresh = lineFromItem(item, existing?.qty ?? 1, header, activeSheet);
+    const line: QuoteLine = existing ? { ...fresh, key: existing.key, fmt: existing.fmt, extra: existing.extra } : fresh;
+    const copy = lines.slice();
+    while (copy.length < r) copy.push(blankLine(activeSheet));
+    copy[r] = line;
+    onChange(copy);
+    setEditing(null);
+    const qtyCol = cols.findIndex((col) => col.builtin === "qty");
+    select({ r, c: qtyCol >= 0 ? qtyCol : c });
+    requestAnimationFrame(focusGrid);
+  };
+
+  /** Keys for the suggestion list; true when the key was used by it. */
+  const suggestKey = (e: KeyboardEvent<HTMLInputElement>) => {
+    if (!suggestOpen) return false;
+    const n = suggest.items.length;
+    const { active } = suggestState;
+    if (e.key === "ArrowDown") {
+      if (n) setSuggestState({ ...suggestState, active: Math.min(active + 1, n - 1) });
+      return true;
+    }
+    if (e.key === "ArrowUp" && active >= 0) {
+      setSuggestState({ ...suggestState, active: active - 1 });
+      return true;
+    }
+    if ((e.key === "Enter" || e.key === "Tab") && active >= 0 && active < n) {
+      pickSuggestion(suggest.items[active]);
+      return true;
+    }
+    if (e.key === "Escape") {
+      setSuggestState({ ...suggestState, closed: true });
+      return true;
+    }
+    return false;
   };
 
   /** Column title (row 1): renames a standard column, or names an extra column. */
@@ -1174,10 +1346,11 @@ export function SheetGrid({
     if (moves[e.key]) {
       e.preventDefault();
       const from = e.shiftKey ? sel : cursor;
-      const target = clampPos(
+      const moved = clampPos(
         from.r + moves[e.key][0],
         from.c + moves[e.key][1],
       );
+      const target = { ...moved, r: visibleRow(moved.r, moves[e.key][0], from.r) };
       select(
         e.shiftKey ? target : skipMerged(target, moves[e.key][1]),
         e.shiftKey,
@@ -1195,9 +1368,8 @@ export function SheetGrid({
       );
     } else if (e.key === "Enter") {
       e.preventDefault();
-      select(
-        skipMerged(clampPos(cursor.r + (e.shiftKey ? -1 : 1), cursor.c), 0),
-      );
+      const down = clampPos(cursor.r + (e.shiftKey ? -1 : 1), cursor.c);
+      select(skipMerged({ ...down, r: visibleRow(down.r, e.shiftKey ? -1 : 1, cursor.r) }, 0));
     } else if (e.key === "F2") {
       e.preventDefault();
       startEdit(cursor.r, cursor.c);
@@ -1437,6 +1609,11 @@ export function SheetGrid({
       rowContext: (_r, e) => openMenu("row", e),
       fillStart: onFillStart,
       editChange: (value) => setEditing((ed) => (ed ? { ...ed, value } : ed)),
+      cellBlur: (to) => {
+        if (to instanceof HTMLElement && to === barRef.current) setEditing((ed) => (ed ? { ...ed, source: "bar" } : ed));
+        else commit();
+      },
+      suggestKey,
       commit,
       cancel,
     };
@@ -1742,6 +1919,7 @@ export function SheetGrid({
           fx
         </div>
         <input
+          ref={barRef}
           aria-label="Formula bar"
           className="min-w-0 flex-1 px-2.5 py-1.5 text-[14px] outline-none read-only:text-slate-500 selection:bg-[#c6c6c6] selection:text-[#1f1f1f]"
           style={FONT}
@@ -1879,6 +2057,7 @@ export function SheetGrid({
                           ? "text-center"
                           : "text-left",
                       titleEdit?.c === i && "p-0",
+                      filters[c.id] && "pr-6",
                     )}
                     title={
                       titled && !readOnly
@@ -1917,6 +2096,10 @@ export function SheetGrid({
                         {c.label}
                       </span>
                     )}
+                    {/* A filtered column shows the filter mark (sort & filter is in the right-click menu). */}
+                    {filters[c.id] && titleEdit?.c !== i ? (
+                      <ListFilter className="absolute top-1/2 right-1.5 size-3.5 -translate-y-1/2 text-[#217346]" aria-label="Filtered" />
+                    ) : null}
                   </th>
                 );
               })}
@@ -1976,6 +2159,8 @@ export function SheetGrid({
                   editing={editing && editing.r === r ? editing : null}
                   flash={Boolean(line && line.key === highlightKey)}
                   rowLabel={sheetRow(r)}
+                  hidden={hiddenRows.has(r)}
+                  filtered={filtering}
                   header={header}
                   h={handlers}
                 />
@@ -2081,6 +2266,38 @@ export function SheetGrid({
         </div>
       </div>
 
+      {filterMenu && cols[filterMenu.c] ? (
+        <SheetFilterMenu
+          key={filterMenu.c}
+          title={cols[filterMenu.c].label || sheetColLetter(filterMenu.c)}
+          values={filterValues(cols[filterMenu.c])}
+          shown={filters[cols[filterMenu.c].id] ?? null}
+          numeric={isNumericCol(cols[filterMenu.c])}
+          style={{ ...filterMenu.style, ...FONT, fontSize: 13 }}
+          onSort={(dir) => sortBy(filterMenu.c, dir)}
+          onApply={(shown) => {
+            const next = { ...filters };
+            if (shown) next[cols[filterMenu.c].id] = shown;
+            else delete next[cols[filterMenu.c].id];
+            applyFilters(next);
+            setFilterMenu(null);
+          }}
+          onClose={() => setFilterMenu(null)}
+        />
+      ) : null}
+
+      {suggestOpen && suggestPos ? (
+        <ItemSuggestList
+          items={suggest.items}
+          loading={suggest.loading}
+          failed={suggest.failed}
+          active={suggestState.active}
+          style={{ ...suggestPos, ...FONT }}
+          onHover={(i) => setSuggestState({ ...suggestState, active: i })}
+          onPick={pickSuggestion}
+        />
+      ) : null}
+
       {/* Right-click menu: cells, row numbers or column letters */}
       {menu ? (
         <div
@@ -2118,6 +2335,20 @@ export function SheetGrid({
             <ClipboardPaste className="size-4 text-slate-500" /> Paste{" "}
             <span className="ml-auto text-[11px] text-slate-400">Ctrl+V</span>
           </button>
+          {!readOnly && cols[cursor.c] && cols[cursor.c].kind !== "index" ? (
+            <button
+              type="button"
+              role="menuitem"
+              className={menuItem}
+              onClick={() => {
+                openFilter(cursor.c, menu.x, menu.y);
+                setMenu(null);
+              }}
+            >
+              <ListFilter className="size-4 text-slate-500" /> Sort &amp; filter…
+              {filters[cols[cursor.c].id] ? <span className="ml-auto text-[11px] text-[#217346]">on</span> : null}
+            </button>
+          ) : null}
           {menu.kind !== "col" ? (
             <>
               <div className="my-1 border-t border-[#e1e1e1]" />
@@ -2301,6 +2532,9 @@ type Handlers = {
   rowContext: (r: number, e: ReactMouseEvent) => void;
   fillStart: (e: ReactMouseEvent) => void;
   editChange: (v: string) => void;
+  /** The cell being typed in lost the keyboard (to `to`): moving into the fx bar keeps editing there. */
+  cellBlur: (to: EventTarget | null) => void;
+  suggestKey: (e: KeyboardEvent<HTMLInputElement>) => boolean;
   commit: (m?: { dr: number; dc: number }) => void;
   cancel: () => void;
 };
@@ -2316,6 +2550,8 @@ const NOOP_HANDLERS: Handlers = {
   rowContext: noop,
   fillStart: noop,
   editChange: noop,
+  cellBlur: noop,
+  suggestKey: () => false,
   commit: noop,
   cancel: noop,
 };
@@ -2337,6 +2573,10 @@ type RowProps = {
   editing: Editing | null;
   flash: boolean;
   rowLabel: number;
+  /** Hidden by a filter. */
+  hidden: boolean;
+  /** A filter is on: row numbers turn blue, like Excel. */
+  filtered: boolean;
   header: QuoteHeader;
   h: { current: Handlers };
 };
@@ -2416,6 +2656,8 @@ const SheetRow = memo(function SheetRow({
   editing,
   flash,
   rowLabel,
+  hidden,
+  filtered,
   header,
   h,
 }: RowProps) {
@@ -2433,7 +2675,7 @@ const SheetRow = memo(function SheetRow({
     });
   }
   return (
-    <tr className={cn(flash && "animate-fade-in [&>td]:bg-[#e2efda]")} title={line?.check ? `Check this line: ${line.check}` : undefined}>
+    <tr hidden={hidden} className={cn(flash && "animate-fade-in [&>td]:bg-[#e2efda]")} title={line?.check ? `Check this line: ${line.check}` : undefined}>
       <th
         scope="row"
         onMouseDown={(e) => h.current.rowDown(r, e)}
@@ -2444,7 +2686,9 @@ const SheetRow = memo(function SheetRow({
           rowHeader === "none"
             ? line?.check
               ? "bg-[#ffd9d9] font-semibold text-[#c00000]"
-              : "bg-[#f3f3f3] font-normal text-[#444]"
+              : filtered && line
+                ? "bg-[#f3f3f3] font-normal text-[#0563c1]"
+                : "bg-[#f3f3f3] font-normal text-[#444]"
             : rowHeader === "full"
               ? "bg-[#217346] font-semibold text-white"
               : "bg-[#d2d2d2] font-semibold text-[#217346]",
@@ -2459,7 +2703,9 @@ const SheetRow = memo(function SheetRow({
         const within = (x: number) => x >= c && x <= cEnd;
         const inSel = rowSel != null && rowSel.c1 <= cEnd && rowSel.c2 >= c;
         const active = within(activeCol);
-        const isEditing = editing != null && within(editing.c);
+        // Typing in the cell itself; typing in the fx bar only mirrors the text here (the bar keeps the keyboard).
+        const isEditing = editing != null && editing.source === "cell" && within(editing.c);
+        const mirrored = editing != null && editing.source === "bar" && within(editing.c);
         const f = isTotal ? undefined : line?.fmt?.[col.id];
         let content = "";
         if (isTotal && totals) {
@@ -2476,9 +2722,12 @@ const SheetRow = memo(function SheetRow({
           content =
             col.kind === "index" ? String(r + 1) : displayValue(line, col);
         }
+        if (mirrored) content = editing.value;
+        const typedTotal =
+          !isTotal && line != null && col.kind === "computed" && line.overrides?.[col.id as keyof LineOverrides] != null;
         const overridden =
-          line && col.id === "unit_price" && line.price_overridden;
-        const autoPrice = overridden ? autoUnitPrice(line, header) : null;
+          (line && col.id === "unit_price" && line.price_overridden) || typedTotal;
+        const autoPrice = overridden && !typedTotal && line ? autoUnitPrice(line, header) : null;
 
         // Excel's green border around the selected block (on top), then the cell's own borders.
         const edges: string[] = [];
@@ -2506,9 +2755,11 @@ const SheetRow = memo(function SheetRow({
             onDoubleClick={() => h.current.dbl(r, c)}
             onContextMenu={(e) => h.current.context(r, c, e)}
             title={
-              overridden
-                ? `Manual price${autoPrice != null ? ` (automatic: ${fmtMoney(autoPrice)})` : ""}`
-                : undefined
+              typedTotal && line
+                ? `Typed value (calculated: ${col.id === "total_weight" ? fmtWeight(calcWeight(line)) : fmtMoney(col.id === "amount" ? calcAmount(line) : lineAmount({ ...line, overrides: { amount: line.overrides?.amount } }))}). Clear the cell to calculate it again.`
+                : overridden
+                  ? `Manual price${autoPrice != null ? ` (automatic: ${fmtMoney(autoPrice)})` : ""}`
+                  : undefined
             }
             style={{
               ...cellStyle(f, selFill),
@@ -2533,6 +2784,8 @@ const SheetRow = memo(function SheetRow({
             {isEditing ? (
               <input
                 autoFocus
+                data-cell-editor
+                autoComplete="off"
                 value={editing.value}
                 onChange={(e) => h.current.editChange(e.target.value)}
                 onMouseDown={(e) => e.stopPropagation()}
@@ -2540,9 +2793,14 @@ const SheetRow = memo(function SheetRow({
                   const len = e.currentTarget.value.length;
                   e.currentTarget.setSelectionRange(len, len);
                 }}
-                onBlur={() => editing.source === "cell" && h.current.commit()}
+                onBlur={(e) => editing.source === "cell" && h.current.cellBlur(e.relatedTarget)}
                 onKeyDown={(e) => {
                   e.stopPropagation();
+                  // An Items cell: the inventory list under it takes ↓ ↑ Enter Tab Esc first.
+                  if (h.current.suggestKey(e)) {
+                    e.preventDefault();
+                    return;
+                  }
                   if (e.key === "Enter") {
                     e.preventDefault();
                     h.current.commit({ dr: e.shiftKey ? -1 : 1, dc: 0 });

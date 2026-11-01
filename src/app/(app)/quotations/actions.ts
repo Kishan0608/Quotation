@@ -7,7 +7,7 @@ import { saveQuotationSchema } from "@/lib/quotation/schema";
 import { firstError, uuidSchema } from "@/lib/validation";
 
 export async function saveQuotation(input: unknown): Promise<ActionResult<{ id: string; quoteNo: string }>> {
-  const auth = await authorize("editor");
+  const auth = await authorize();
   if (!auth.ok) return auth;
   const parsed = saveQuotationSchema.safeParse(input);
   if (!parsed.success) return { ok: false, error: firstError(parsed.error) };
@@ -27,7 +27,7 @@ export async function saveQuotation(input: unknown): Promise<ActionResult<{ id: 
 }
 
 export async function deleteQuotation(id: unknown): Promise<ActionResult> {
-  const auth = await authorize("editor");
+  const auth = await authorize();
   if (!auth.ok) return auth;
   const parsedId = uuidSchema.safeParse(id);
   if (!parsedId.success) return { ok: false, error: "Invalid quotation." };

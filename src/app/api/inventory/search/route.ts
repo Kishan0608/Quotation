@@ -4,14 +4,14 @@ import { applyPrefixSearch, applyTextSearch } from "@/lib/data/inventory";
 import { sizeQuery } from "@/lib/import/match";
 import type { PickerItem } from "@/lib/inventory/types";
 
-const FIELDS = "id, item_code, description, weight_kg, unit_price, stock_qty, note, actual_weight";
+const FIELDS = "id, description, weight_kg, unit_price, stock_qty, note, actual_weight";
 
 /**
  * Inventory lookup for the quotation item picker, one page at a time (`limit` + `offset`).
  * The text box accepts several searches separated by commas ("D4, D6, 2\" tee").
  */
 export async function GET(request: NextRequest) {
-  const auth = await authorize("viewer");
+  const auth = await authorize();
   if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: 401 });
 
   const p = request.nextUrl.searchParams;
@@ -42,14 +42,21 @@ export async function GET(request: NextRequest) {
 
   if (searches.length <= 1) {
     const { data, count, error } = await search(groups[0] ?? "", true).range(offset, offset + limit - 1);
-    if (error) return NextResponse.json({ error: "Search failed." }, { status: 500 });
+    if (error) {
+      console.error("inventory search failed:", error.message, error.code ?? "");
+      return NextResponse.json({ error: "Search failed." }, { status: 500 });
+    }
     return NextResponse.json({ items: (data ?? []) as PickerItem[], total: count ?? 0 }, { headers: { "Cache-Control": "private, no-store" } });
   }
 
   // Several searches (comma-separated, or a size the customer's way): run each one (up to 200
   // matches), keep the typed order, drop duplicates, then return the requested page.
   const results = await Promise.all(searches);
-  if (results.some((r) => r.error)) return NextResponse.json({ error: "Search failed." }, { status: 500 });
+  const failed = results.find((r) => r.error)?.error;
+  if (failed) {
+    console.error("inventory search failed:", failed.message, failed.code ?? "");
+    return NextResponse.json({ error: "Search failed." }, { status: 500 });
+  }
   const seen = new Set<string>();
   const merged: PickerItem[] = [];
   for (const r of results) {

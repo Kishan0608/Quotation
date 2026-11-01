@@ -23,7 +23,7 @@ const toDraft = (s?: PipeSize): Draft =>
     ...SCHEDULES.map((k) => [k.key, s?.[k.key] == null ? "" : String(s[k.key])]),
   ]) as Draft;
 
-export function SizeChart({ sizes, isAdmin }: { sizes: PipeSize[]; isAdmin: boolean }) {
+export function SizeChart({ sizes }: { sizes: PipeSize[] }) {
   const [editing, setEditing] = useState<{ id: number | "new"; draft: Draft } | null>(null);
   const [saving, setSaving] = useState(false);
   const [hoverCol, setHoverCol] = useState<number | null>(null);
@@ -96,11 +96,9 @@ export function SizeChart({ sizes, isAdmin }: { sizes: PipeSize[]; isAdmin: bool
       <PageHeader
         title="Pipe size chart"
         actions={
-          isAdmin ? (
-            <Button onClick={() => setEditing({ id: "new", draft: toDraft() })} disabled={editing != null}>
-              <Plus /> Add size
-            </Button>
-          ) : null
+          <Button onClick={() => setEditing({ id: "new", draft: toDraft() })} disabled={editing != null}>
+            <Plus /> Add size
+          </Button>
         }
       />
       <Card className="overflow-hidden">
@@ -144,28 +142,26 @@ export function SizeChart({ sizes, isAdmin }: { sizes: PipeSize[]; isAdmin: bool
                       </td>
                     ))}
                     <td className="border-b border-slate-100 px-2 py-1">
-                      {isAdmin ? (
-                        <div className="flex justify-end gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
-                          <Button
-                            size="icon-sm"
-                            variant="ghost"
-                            aria-label={`Edit ${s.nps}`}
-                            onClick={() => setEditing({ id: s.id, draft: toDraft(s) })}
-                            disabled={editing != null}
-                          >
-                            <Pencil />
-                          </Button>
-                          <Button
-                            size="icon-sm"
-                            variant="ghost"
-                            aria-label={`Delete ${s.nps}`}
-                            className="hover:bg-red-50 hover:text-red-600"
-                            onClick={() => setToDelete(s)}
-                          >
-                            <Trash2 />
-                          </Button>
-                        </div>
-                      ) : null}
+                      <div className="flex justify-end gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
+                        <Button
+                          size="icon-sm"
+                          variant="ghost"
+                          aria-label={`Edit ${s.nps}`}
+                          onClick={() => setEditing({ id: s.id, draft: toDraft(s) })}
+                          disabled={editing != null}
+                        >
+                          <Pencil />
+                        </Button>
+                        <Button
+                          size="icon-sm"
+                          variant="ghost"
+                          aria-label={`Delete ${s.nps}`}
+                          className="hover:bg-red-50 hover:text-red-600"
+                          onClick={() => setToDelete(s)}
+                        >
+                          <Trash2 />
+                        </Button>
+                      </div>
                     </td>
                   </tr>
                 ),

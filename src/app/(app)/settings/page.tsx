@@ -8,8 +8,7 @@ import { SettingsForm } from "./settings-form";
 export const metadata: Metadata = { title: "Company settings" };
 
 export default async function SettingsPage() {
-  const user = await requireUser();
-  if (user.role !== "admin") return <AccessDenied message="Only admins can change company settings." />;
+  await requireUser();
   const settings = await getCompanySettings(await createClient());
   if (!settings) return <AccessDenied message="Company settings are missing. Run the database migration first." />;
 

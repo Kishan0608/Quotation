@@ -5,7 +5,6 @@ export const INVENTORY_SORTS = {
   weight: "weight_kg",
   price: "unit_price",
   quantity: "stock_qty",
-  amount: "total_amount",
 } as const;
 export type InventorySort = keyof typeof INVENTORY_SORTS;
 export const DEFAULT_SORT: InventorySort = "added";

@@ -1,6 +1,6 @@
 "use client";
 
-import { Pencil, Plus, Trash2 } from "lucide-react";
+import { Pencil, Plus, Trash2, X } from "lucide-react";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Modal } from "@/components/ui/dialog";
@@ -9,7 +9,7 @@ import { NumInput } from "@/components/ui/num-input";
 import { cn } from "@/lib/cn";
 import { fmtMoney, fmtQty, fmtWeight } from "@/lib/format";
 import { adjustmentTitle, currencyLabel } from "@/lib/quotation/calc";
-import { amountInWords } from "@/lib/quotation/currency";
+import { amountInWords, QUOTE_CURRENCIES } from "@/lib/quotation/currency";
 import { MAX_ADJUSTMENTS } from "@/lib/quotation/schema";
 import type { Adjustment, AdjustmentKind, QuoteTotals } from "@/lib/quotation/types";
 import { ExchangeRateInput } from "./exchange-rate";
@@ -31,13 +31,17 @@ type Props = {
   readOnly: boolean;
   onChange: (next: Adjustment[]) => void;
   onRateChange: (rate: number) => void;
+  /** Switches the quotation between RMB -> INR and RMB -> USD. */
+  onCurrencyChange?: (currency: string) => void;
+  /** The live rate for a newly chosen currency is loading. */
+  rateLoading?: boolean;
 };
 
 /**
  * Lines are in RMB: Final total (RMB) -> x exchange rate -> amount in the quotation
  * currency -> any number of discounts / charges / taxes -> grand total.
  */
-export function BillLines({ adjustments, totals, currency, baseCurrency, readOnly, onChange, onRateChange }: Props) {
+export function BillLines({ adjustments, totals, currency, baseCurrency, readOnly, onChange, onRateChange, onCurrencyChange, rateLoading }: Props) {
   const base = currencyLabel(baseCurrency);
   const converts = currency !== baseCurrency;
   const [draft, setDraft] = useState<Draft | null>(null);
@@ -74,12 +78,58 @@ export function BillLines({ adjustments, totals, currency, baseCurrency, readOnl
       <dl className="divide-y divide-slate-100 rounded-lg border border-slate-200 text-sm">
         {row("Total quantity", fmtQty(totals.totalQty))}
         {row("Total weight", `${fmtWeight(totals.totalWeight)} kg`)}
+        {/* Converting the RMB total is optional: added with a click, removed again with one. */}
+        {!readOnly && onCurrencyChange ? (
+          converts ? (
+            <div className="flex items-center justify-between gap-2 px-3 py-2">
+              <dt className="text-slate-500">Quotation in</dt>
+              <dd className="flex items-center gap-1.5">
+                <span role="radiogroup" aria-label="Quotation currency" className="inline-flex rounded-md border border-slate-300 bg-white p-0.5 text-xs font-medium">
+                  {QUOTE_CURRENCIES.map((code) => (
+                    <button
+                      key={code}
+                      type="button"
+                      role="radio"
+                      aria-checked={currency === code}
+                      disabled={rateLoading}
+                      onClick={() => currency !== code && onCurrencyChange(code)}
+                      className={cn("rounded px-3 py-1 transition-colors", currency === code ? "bg-brand-600 text-white" : "text-slate-600 hover:bg-slate-100")}
+                    >
+                      {currencyLabel(baseCurrency)} → {code}
+                    </button>
+                  ))}
+                </span>
+                <button
+                  type="button"
+                  title={`Remove the conversion (quotation in ${base})`}
+                  aria-label="Remove the currency conversion"
+                  disabled={rateLoading}
+                  onClick={() => onCurrencyChange(baseCurrency)}
+                  className="grid size-7 place-items-center rounded-md text-slate-400 hover:bg-red-50 hover:text-red-600"
+                >
+                  <X className="size-4" />
+                </button>
+              </dd>
+            </div>
+          ) : (
+            <div className="px-3 py-2">
+              <button
+                type="button"
+                disabled={rateLoading}
+                onClick={() => onCurrencyChange(QUOTE_CURRENCIES[0])}
+                className="inline-flex items-center gap-1.5 rounded-md border border-dashed border-slate-300 px-2.5 py-1 text-xs font-medium text-brand-700 hover:border-brand-400 hover:bg-brand-50"
+              >
+                <Plus className="size-3.5" /> Convert currency ({base} → INR / USD)
+              </button>
+            </div>
+          )
+        ) : null}
         {converts ? (
           <>
             {row(`Final total (${base})`, fmtMoney(totals.baseSubtotal), true)}
             <div className="px-3 py-2">
               <p className="mb-1 text-xs text-slate-500">Exchange rate</p>
-              <ExchangeRateInput from={baseCurrency} to={currency} rate={totals.exchangeRate} readOnly={readOnly} onChange={onRateChange} />
+              <ExchangeRateInput key={currency} from={baseCurrency} to={currency} rate={totals.exchangeRate} readOnly={readOnly || rateLoading} onChange={onRateChange} />
             </div>
             {row(`Amount (${currencyLabel(currency)})`, fmtMoney(totals.subtotal), true)}
           </>

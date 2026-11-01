@@ -2,12 +2,9 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { INVENTORY_SORTS, type InventoryFilters } from "@/lib/inventory/filters";
 import type { Database, InventoryItemRow } from "@/lib/supabase/database.types";
+import { escapeLike, quoteValue } from "./like";
 
 type Client = SupabaseClient<Database>;
-
-const escapeLike = (s: string) => s.replace(/[\\%_]/g, (c) => `\\${c}`);
-/** Wraps a value in PostgREST double quotes so commas, brackets and quotes in user input stay literal. */
-const quoteValue = (s: string) => `"${s.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
 
 /** Every search word must appear (AND) in the item name or the note (OR), ignoring case. */
 export function applyTextSearch<Q extends { or: (filters: string) => Q }>(query: Q, text: string) {

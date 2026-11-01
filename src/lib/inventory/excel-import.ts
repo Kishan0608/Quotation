@@ -1,17 +1,42 @@
 import type { CellValue, Workbook, Worksheet } from "exceljs";
 import { parseNumber } from "../format";
+import type { ColumnChoice } from "../import/sheet-columns";
 import { cleanActualWeight, cleanNote, cleanSupplierText } from "./clean-text";
 import { inventoryItemSchema, MAX_IMPORT_ROWS, type InventoryInput } from "./schema";
 
 export type ImportRow = { row: number; data: InventoryInput };
 export type ImportIssue = { row: number; message: string };
-export type ImportResult = { sheetName: string; rows: ImportRow[]; issues: ImportIssue[]; truncated: boolean };
+export type ImportResult = {
+  sheetName: string;
+  rows: ImportRow[];
+  issues: ImportIssue[];
+  truncated: boolean;
+  /** The columns read (null when no item column was found). */
+  columns: InventoryColumns | null;
+};
 
-type Field = "item_code" | "description" | "weight_kg" | "unit_price" | "stock_qty" | "loading" | "actual_weight" | "note" | "total";
+/** The fields an inventory sheet's columns can hold. */
+export type InventoryField = "description" | "weight_kg" | "unit_price" | "stock_qty" | "actual_weight" | "note";
+export const INVENTORY_FIELDS: { field: InventoryField; label: string }[] = [
+  { field: "description", label: "Items" },
+  { field: "weight_kg", label: "WT in kgs" },
+  { field: "unit_price", label: "RMB/PCS" },
+  { field: "stock_qty", label: "QTY" },
+  { field: "actual_weight", label: "Actual weight" },
+  { field: "note", label: "Note / Length" },
+];
+/**
+ * `actualUnlabeled`: the actual-weight column has no heading (found next to TOTAL), so only
+ * values that look like one ("5.5-5.6MM") are read from it.
+ */
+export type InventoryColumns = ColumnChoice<InventoryField> & { actualUnlabeled?: boolean };
+
+type Field = "item_no" | "description" | "weight_kg" | "unit_price" | "stock_qty" | "loading" | "actual_weight" | "note" | "total";
 
 // Header text -> field. Order matters: first match wins for each column.
 const HEADER_RULES: [Field, RegExp][] = [
-  ["item_code", /^(items?\s*no\.?|item\s*code|code|sku|part\s*no\.?)$/i],
+  // Item numbers are not imported; the column is only recognised so it isn't read as anything else.
+  ["item_no", /^(items?\s*no\.?|item\s*code|code|sku|part\s*no\.?)$/i],
   ["description", /^(items?|description|item\s*name|product|size|specification)$/i],
   ["weight_kg", /^(wt|weight)(\s*(in)?\s*kgs?)?(\s*\/\s*pcs?)?$|^unit\s*w(eigh)?t/i],
   // "QTY /PCS" is a quantity, not a price per piece.
@@ -68,21 +93,15 @@ function findHeader(ws: Worksheet) {
 }
 
 /**
- * Reads the first worksheet that has an "ITEMS"/"Description" header (like
- * the supplier loading plan) and turns every row into a validated inventory
- * item with the same columns: ITEMS NO., ITEMS, WT IN KGS, RMB/PCS, QTY,
- * Actual Weight, NOTE (or LENGTH). A LOADING CHARGES column is skipped.
+ * The columns of the first worksheet with an "ITEMS"/"Description" header (like the supplier
+ * loading plan): ITEMS, WT IN KGS, RMB/PCS, QTY, Actual Weight, NOTE (or LENGTH). Most sheets
+ * write the actual weight without a header in the column after TOTAL (two columns after LOADING
+ * CHARGES when TOTAL has no header either). Item numbers and loading charges are not read.
  */
-export function parseInventoryWorkbook(workbook: Workbook): ImportResult {
+export function detectInventoryColumns(workbook: Workbook): InventoryColumns | null {
   for (const ws of workbook.worksheets) {
     const header = findHeader(ws);
     if (!header) continue;
-
-    const rows: ImportRow[] = [];
-    const issues: ImportIssue[] = [];
-    let truncated = false;
-    // Most sheets write the actual weight without a header in the column after TOTAL
-    // (two columns after LOADING CHARGES when TOTAL has no header either).
     const unlabeledActual = header.columns.has("actual_weight")
       ? undefined
       : header.columns.has("total")
@@ -90,13 +109,33 @@ export function parseInventoryWorkbook(workbook: Workbook): ImportResult {
         : header.columns.has("loading")
           ? header.columns.get("loading")! + 2
           : undefined;
-    const actualIsUnlabeled = unlabeledActual != null;
-    const col = (f: Field) => (f === "actual_weight" && actualIsUnlabeled ? unlabeledActual : header.columns.get(f));
+    const columns: Partial<Record<InventoryField, number>> = {};
+    for (const { field } of INVENTORY_FIELDS) {
+      const c = field === "actual_weight" ? (header.columns.get("actual_weight") ?? unlabeledActual) : header.columns.get(field);
+      if (c != null) columns[field] = c;
+    }
+    return { sheet: ws.name, headerRow: header.headerRow, columns, actualUnlabeled: unlabeledActual != null };
+  }
+  return null;
+}
 
-    for (let r = header.headerRow + 1; r <= ws.rowCount; r++) {
+/**
+ * Turns every row of the chosen columns (default: what the headers say) into a validated
+ * inventory item.
+ */
+export function parseInventoryWorkbook(workbook: Workbook, choice?: InventoryColumns | null): ImportResult {
+  const chosen = choice ?? detectInventoryColumns(workbook);
+  const ws = chosen?.columns.description != null ? workbook.getWorksheet(chosen.sheet) : undefined;
+  if (chosen && ws) {
+    const rows: ImportRow[] = [];
+    const issues: ImportIssue[] = [];
+    let truncated = false;
+    const actualIsUnlabeled = Boolean(chosen.actualUnlabeled);
+
+    for (let r = chosen.headerRow + 1; r <= ws.rowCount; r++) {
       const row = ws.getRow(r);
-      const get = (f: Field) => {
-        const c = col(f);
+      const get = (f: InventoryField) => {
+        const c = chosen.columns[f];
         return c ? cellToValue(row.getCell(c).value) : null;
       };
 
@@ -120,7 +159,6 @@ export function parseInventoryWorkbook(workbook: Workbook): ImportResult {
       if (actualIsUnlabeled && !/\d.*MM/i.test(String(rawActual ?? ""))) rawActual = null;
 
       const candidate = {
-        item_code: get("item_code"),
         description,
         weight_kg: weight,
         unit_price: price,
@@ -134,7 +172,7 @@ export function parseInventoryWorkbook(workbook: Workbook): ImportResult {
       else issues.push({ row: r, message: result.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ") });
     }
 
-    return { sheetName: ws.name, rows, issues, truncated };
+    return { sheetName: ws.name, rows, issues, truncated, columns: chosen };
   }
-  return { sheetName: "", rows: [], issues: [{ row: 0, message: "No sheet with an ITEMS / Description header was found." }], truncated: false };
+  return { sheetName: "", rows: [], issues: [{ row: 0, message: "No sheet with an ITEMS / Description header was found." }], truncated: false, columns: null };
 }

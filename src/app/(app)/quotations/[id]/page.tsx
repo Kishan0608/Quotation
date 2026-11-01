@@ -18,9 +18,6 @@ export default async function QuotationPage({ params }: PageProps<"/quotations/[
   const [quotation, ctx] = await Promise.all([getQuotation(supabase, id.data), loadBuilderContext(supabase)]);
   if (!quotation) notFound();
 
-  // Mirrors the RLS policy: admins edit everything, editors edit their own.
-  const canModify = user.role === "admin" || (user.role === "editor" && quotation.createdBy === user.id);
-
   return (
     <QuotationBuilder
       key={quotation.id}
@@ -30,8 +27,8 @@ export default async function QuotationPage({ params }: PageProps<"/quotations/[
       header={quotation.header}
       lines={quotation.lines}
       company={ctx.company}
-      readOnly={!canModify}
-      canDelete={canModify}
+      readOnly={false}
+      canDelete
       allowDraftRestore={false}
       userName={user.fullName ?? user.email}
     />

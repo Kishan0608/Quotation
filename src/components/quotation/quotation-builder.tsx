@@ -10,22 +10,42 @@ import { Button, ButtonLink } from "@/components/ui/button";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
 import { ConfirmDialog } from "@/components/ui/dialog";
 import { Field, Input, Textarea } from "@/components/ui/field";
-import { fmtDateTime, fmtMoney, round2 } from "@/lib/format";
-import type { PickerItem } from "@/lib/inventory/types";
-import { computeTotals, isBlankLine, repriceLines } from "@/lib/quotation/calc";
-import { MAX_EXTRA_COLUMNS } from "@/lib/quotation/schema";
+import { fmtDateTime, parseNumber, round2 } from "@/lib/format";
+import type { CustomerPick } from "@/lib/customers/schema";
+import { autoUnitPrice, computeTotals, currencyLabel, isBlankLine, repriceLines } from "@/lib/quotation/calc";
+import { applyInventoryChanges } from "@/lib/quotation/live-inventory";
 import { HIDEABLE_COLUMNS, STANDARD_COLUMNS, type ColumnLayoutPatch, type CompanyInfo, type QuoteDocument, type QuoteHeader, type QuoteLine, type StandardColumn } from "@/lib/quotation/types";
 import { useLocalStorage, writeLocalStorage } from "@/lib/use-local-storage";
 import { ExportMenu } from "./export-menu";
 import { ImportDialog, type ImportedLine } from "./import-dialog";
 import { BillLines } from "./bill-lines";
-import { ItemPicker } from "./item-picker";
+import { CustomerPicker } from "./customer-picker";
+import { fetchLiveRate } from "./exchange-rate";
 import { blankLine, lineFromItem } from "./line-utils";
 import { SheetGrid } from "./sheet-grid";
+import { useInventoryChanges } from "./use-inventory-changes";
 
 const DRAFT_KEY = "qp.draft.new";
 // Lines are priced in RMB, so only these change line prices (the exchange rate applies to the total).
 const PRICING_KEYS: (keyof QuoteHeader)[] = ["margin_pct", "pricing_basis", "rate_per_kg"];
+
+const sheetNameOf = (name: string) => name.trim().replace(/[:\\/?*[\]]/g, "").slice(0, 31);
+
+/** The customer's sheet is named after the contact person, or the company when there is none. */
+const customerSheetName = (h: Pick<QuoteHeader, "contact_person" | "customer_name">) => sheetNameOf(h.contact_person || "") || sheetNameOf(h.customer_name);
+
+/**
+ * New customer details, and the customer's sheet renamed to match - while that sheet still has
+ * the default name or the name it got from the previous details (a name typed on the tab stays).
+ */
+function withCustomerSheet(h: QuoteHeader, patch: Partial<Pick<QuoteHeader, "customer_name" | "contact_person">>): QuoteHeader {
+  const next = { ...h, ...patch };
+  const [first, ...rest] = h.sheet_names;
+  const follows = !first || first === "Quotation" || first === customerSheetName(h) || first === sheetNameOf(h.customer_name);
+  const name = customerSheetName(next) || "Quotation";
+  if (!follows || rest.some((n) => n.toLowerCase() === name.toLowerCase()) || name.toLowerCase() === "china") return next;
+  return { ...next, sheet_names: [name, ...rest] };
+}
 
 export type BuilderProps = {
   id: string | null;
@@ -52,17 +72,8 @@ export function QuotationBuilder(props: BuilderProps) {
   const [history, setHistory] = useState<{ past: QuoteLine[][]; future: QuoteLine[][] }>({ past: [], future: [] });
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [highlightKey, setHighlightKey] = useState<string | null>(null);
-  /** Row the user selected on the sheet (null = not chosen yet); added items go there. */
-  const targetRow = useRef<number | null>(null);
-  const onCursorRow = useCallback((r: number) => {
-    targetRow.current = r;
-  }, []);
-  /** Asks the sheet to select a row (the item just added), so the next one goes below it. */
-  const [jump, setJump] = useState<{ row: number } | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
-  const highlightTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const isNew = id == null;
   // Lines of a deleted sheet (e.g. brought back by Undo) are ignored.
@@ -70,20 +81,21 @@ export function QuotationBuilder(props: BuilderProps) {
   const totals = useMemo(() => computeTotals(filledLines, header), [filledLines, header]);
 
   // ---- Sheets (Excel-style tabs): every line belongs to one sheet ------------------------
-  const [activeSheet, setActiveSheetState] = useState(0);
-  // Another sheet: its own selected row starts unset.
-  const setActiveSheet = (i: number) => {
-    targetRow.current = null;
-    setActiveSheetState(i);
-  };
-  const sheetIndex = Math.min(activeSheet, header.sheet_names.length - 1);
+  const [activeSheet, setActiveSheet] = useState(0);
+  /**
+   * The "China" tab: the first sheet's lines at the China (inventory) price. It is the same lines
+   * as the customer's sheet, so adding, editing or deleting in either tab changes both; only the
+   * price differs (customer price = China price / (1 - commission)).
+   */
+  const [chinaView, setChinaView] = useState(true);
+  const sheetIndex = chinaView ? 0 : Math.min(activeSheet, header.sheet_names.length - 1);
   const sheetLines = useMemo(() => lines.filter((l) => l.sheet === sheetIndex), [lines, sheetIndex]);
   const sheetTotals = useMemo(() => computeTotals(sheetLines.filter((l) => !isBlankLine(l)), header), [sheetLines, header]);
-  const inQuote = useMemo(() => {
-    const m = new Map<string, number>();
-    for (const l of lines) if (l.inventory_item_id) m.set(l.inventory_item_id, (m.get(l.inventory_item_id) ?? 0) + (l.qty ?? 0));
-    return m;
-  }, [lines]);
+  const chinaLines = useMemo(
+    () => (chinaView ? sheetLines.map((l) => ({ ...l, unit_price: l.base_price, price_overridden: false, overrides: undefined })) : []),
+    [chinaView, sheetLines],
+  );
+  const chinaTotals = useMemo(() => computeTotals(chinaLines.filter((l) => !isBlankLine(l)), header), [chinaLines, header]);
 
   // ---- Line history (undo / redo) -------------------------------------------------
   const commitLines = useCallback(
@@ -109,9 +121,26 @@ export function QuotationBuilder(props: BuilderProps) {
     setDirty(true);
   };
 
+  // ---- Live inventory ----------------------------------------------------------------
+  // Inventory changes made while this quotation is open (an import, a price edit, another PC)
+  // reach its lines without a refresh; a saved quotation is never re-priced just by opening it.
+  const live = useRef({ lines, header });
+  useEffect(() => {
+    live.current = { lines, header };
+  });
+  useInventoryChanges(!readOnly, (items) => {
+    const r = applyInventoryChanges(live.current.lines, items, live.current.header);
+    if (!r.updated && !r.linked) return;
+    live.current.lines = r.lines;
+    setLines(r.lines);
+    setDirty(true);
+    const parts = [r.updated ? `${r.updated} line${r.updated === 1 ? "" : "s"} re-priced` : "", r.linked ? `${r.linked} new line${r.linked === 1 ? "" : "s"} now found in inventory` : ""].filter(Boolean);
+    toast.success(`Inventory changed: ${parts.join(", ")}.`);
+  });
+
   // ---- Header -----------------------------------------------------------------------
   const setField = <K extends keyof QuoteHeader>(key: K, value: QuoteHeader[K]) => {
-    const next = { ...header, [key]: value };
+    const next = key === "customer_name" || key === "contact_person" ? withCustomerSheet(header, { [key]: value as string }) : { ...header, [key]: value };
     if (key === "currency" && value === company.base_currency) next.exchange_rate = 1;
     setHeader(next);
     setDirty(true);
@@ -120,6 +149,43 @@ export function QuotationBuilder(props: BuilderProps) {
       const repriced = repriceLines(lines, next);
       if (repriced.some((l, i) => l !== lines[i])) commitLines(repriced);
     }
+  };
+
+  /**
+   * RMB -> INR or RMB -> USD. The rate is the new currency's: one already used for it here comes
+   * back, otherwise today's live rate is loaded (the old currency's rate is never kept for it).
+   */
+  const ratesUsed = useRef<Record<string, number>>({});
+  const [rateLoading, setRateLoading] = useState(false);
+  const changeCurrency = async (code: string) => {
+    const base = company.base_currency;
+    ratesUsed.current[header.currency] = header.exchange_rate;
+    const known = code === base ? 1 : ratesUsed.current[code];
+    setHeader((h) => ({ ...h, currency: code, exchange_rate: known ?? h.exchange_rate }));
+    setDirty(true);
+    if (known != null) return;
+    setRateLoading(true);
+    try {
+      const fx = await fetchLiveRate(base, code);
+      ratesUsed.current[code] = fx.rate;
+      setHeader((h) => (h.currency === code ? { ...h, exchange_rate: fx.rate } : h));
+      toast.success(`1 ${currencyLabel(base)} = ${fx.rate} ${code} · ${fx.source}`);
+    } catch {
+      toast.error(`Could not load today's ${currencyLabel(base)} → ${code} rate. Enter it by hand in the Exchange rate box.`);
+    } finally {
+      setRateLoading(false);
+    }
+  };
+
+  /** A saved customer picked in the Customer box: all its details go into the quotation. */
+  const pickCustomer = (c: CustomerPick) => {
+    setHeader((h) => ({
+      ...withCustomerSheet(h, { customer_name: c.name, contact_person: c.contact_person ?? "" }),
+      customer_phone: c.phone ?? "",
+      customer_email: c.email ?? "",
+      customer_address: c.address ?? "",
+    }));
+    setDirty(true);
   };
 
   /** Column changes from the sheet (extra columns, deleted columns); values of removed extra columns are dropped. */
@@ -134,23 +200,71 @@ export function QuotationBuilder(props: BuilderProps) {
     }
   };
 
-  const flash = (key: string) => {
-    setHighlightKey(key);
-    if (highlightTimer.current) clearTimeout(highlightTimer.current);
-    highlightTimer.current = setTimeout(() => setHighlightKey(null), 1200);
-  };
-
-  /** Replaces the lines of the active sheet, keeping the other sheets (and sheet order). */
-  const commitSheetLines = (next: QuoteLine[]) => {
+  /** Replaces the lines of sheet `target` (default: the active one), keeping the other sheets (and sheet order). */
+  const commitSheetLines = (next: QuoteLine[], target = sheetIndex) => {
     const merged: QuoteLine[] = [];
     for (let s = 0; s < header.sheet_names.length; s++) {
-      if (s === sheetIndex) merged.push(...next.map((l) => (l.sheet === s ? l : { ...l, sheet: s })));
+      if (s === target) merged.push(...next.map((l) => (l.sheet === s ? l : { ...l, sheet: s })));
       else merged.push(...lines.filter((l) => l.sheet === s));
     }
     commitLines(merged);
   };
 
+  /**
+   * An edit on the China tab: its price is the China price (base_price); the customer price
+   * follows it (unless it was typed by hand), and everything else is the same line.
+   */
+  const commitChinaLines = (next: QuoteLine[]) => {
+    const before = new Map(sheetLines.map((l) => [l.key, l]));
+    commitSheetLines(
+      next.map((n) => {
+        const orig = before.get(n.key);
+        // Filled from inventory just now (a suggestion picked here): the line already has the
+        // inventory price and its customer price; keep both.
+        if (n.inventory_item_id && n.inventory_item_id !== orig?.inventory_item_id) return n;
+        const line: QuoteLine = {
+          ...n,
+          base_price: n.unit_price,
+          unit_price: orig?.unit_price ?? null,
+          price_overridden: orig?.price_overridden ?? false,
+          overrides: orig?.overrides ?? {},
+        };
+        const priceChanged = !orig || orig.base_price !== line.base_price || orig.unit_weight_kg !== line.unit_weight_kg;
+        if (priceChanged && !line.price_overridden) line.unit_price = autoUnitPrice(line, header) ?? line.unit_price;
+        return line;
+      }),
+      0,
+    );
+  };
+
+  // ---- Commission (the box above the sheet): Enter re-prices every customer price ----------
+  const [commissionDraft, setCommissionDraft] = useState(String(header.margin_pct || ""));
+  const [commissionSeen, setCommissionSeen] = useState(header.margin_pct);
+  if (commissionSeen !== header.margin_pct) {
+    setCommissionSeen(header.margin_pct);
+    setCommissionDraft(String(header.margin_pct || ""));
+  }
+  const applyCommission = () => {
+    const value = commissionDraft.trim() === "" ? 0 : parseNumber(commissionDraft);
+    if (value == null || value < 0 || value > 95) {
+      toast.error("Enter a commission from 0 to 95 %.");
+      setCommissionDraft(String(header.margin_pct || ""));
+      return;
+    }
+    if (value === header.margin_pct) return;
+    setField("margin_pct", value);
+    toast.success(value ? `Commission ${value}%: customer prices updated (China price ÷ ${round2(1 - value / 100)}).` : "Commission removed: customer prices = China prices.");
+  };
+
+  /** The tabs: China first, then the quotation's sheets (the first one named after the customer). */
+  const tabNames = ["China", ...header.sheet_names];
+  const selectTab = (i: number) => {
+    setChinaView(i === 0);
+    if (i > 0) setActiveSheet(i - 1);
+  };
+
   const addSheet = () => {
+    setChinaView(false);
     const taken = new Set(header.sheet_names.map((n) => n.toLowerCase()));
     let n = header.sheet_names.length + 1;
     while (taken.has(`sheet ${n}`)) n++;
@@ -181,32 +295,6 @@ export function QuotationBuilder(props: BuilderProps) {
     setSheetToDelete(null);
   };
 
-  const addItem = (item: PickerItem, qty: number) => {
-    const existing = lines.find((l) => l.inventory_item_id === item.id && l.sheet === sheetIndex);
-    if (existing) {
-      commitLines(lines.map((l) => (l.key === existing.key ? { ...l, qty: (l.qty ?? 0) + qty } : l)));
-      flash(existing.key);
-      setJump({ row: sheetLines.findIndex((l) => l.key === existing.key) });
-      toast.success(`Quantity updated: ${item.description}`, { duration: 1800 });
-      return;
-    }
-    // Like typing in Excel: the item goes into the selected row when it is empty, otherwise
-    // right below it. Without a selected row it goes after the last filled row.
-    const line = lineFromItem(item, qty, header, sheetIndex);
-    const rows = sheetLines.slice();
-    const lastFilled = rows.reduce((last, l, i) => (isBlankLine(l) ? last : i), -1);
-    const selected = targetRow.current;
-    let at = selected == null ? lastFilled + 1 : selected < rows.length && !isBlankLine(rows[selected]) ? selected + 1 : selected;
-    at = Math.max(0, at);
-    while (rows.length < at) rows.push(blankLine(sheetIndex));
-    if (at < rows.length && isBlankLine(rows[at])) rows[at] = { ...line, fmt: rows[at].fmt }; // keep the empty row's formatting
-    else rows.splice(at, 0, line);
-    commitSheetLines(rows);
-    setJump({ row: at });
-    flash(line.key);
-    toast.success(`Added ${item.description}`, { duration: 1800 });
-  };
-
   /**
    * Lines from an imported list, in the file's order, after the last filled row. An inventory
    * item already on this sheet gets the quantity added; a line not in the inventory comes in as a
@@ -214,16 +302,6 @@ export function QuotationBuilder(props: BuilderProps) {
    */
   const [importOpen, setImportOpen] = useState(false);
   const addItems = (list: ImportedLine[]) => {
-    // The customer's notes go in a "Note" column on the sheet, made next to Length when first needed.
-    let noteKey: string | null = null;
-    if (list.some((l) => l.note)) {
-      const existing = header.extra_columns.find((c) => c.name.trim().toLowerCase() === "note");
-      if (existing) noteKey = existing.key;
-      else if (header.extra_columns.length < MAX_EXTRA_COLUMNS) {
-        noteKey = Math.random().toString(36).slice(2, 10) || "note";
-        patchColumns({ extra_columns: [...header.extra_columns, { key: noteKey, name: "Note", after: "remarks" }] });
-      } else toast.info(`The notes were left out: the sheet already has ${MAX_EXTRA_COLUMNS} extra columns.`);
-    }
     const rows = sheetLines.slice();
     let added = 0;
     let updated = 0;
@@ -245,8 +323,8 @@ export function QuotationBuilder(props: BuilderProps) {
         actual_weight: l.actual.slice(0, 100),
         unit_price: price,
         price_overridden: item ? price != null && price !== base.unit_price : price != null,
+        // Note / Length: the length and the customer's note, one field.
         remarks: l.length.slice(0, 300),
-        extra: noteKey && l.note ? { ...base.extra, [noteKey]: l.note.slice(0, 300) } : base.extra,
         check,
       };
       const at = rows.reduce((last, r, i) => (isBlankLine(r) ? last : i), -1) + 1;
@@ -313,6 +391,8 @@ export function QuotationBuilder(props: BuilderProps) {
           Object.entries(l.fmt ?? {}).filter(([k]) => (k.startsWith("x:") ? header.extra_columns.some((c) => `x:${c.key}` === k) : STANDARD_COLUMNS.includes(k as StandardColumn))),
         ),
         actual_weight: l.actual_weight,
+        // Total KG / Total Amount / Final Total typed over the calculation.
+        overrides: l.overrides ?? {},
       })),
     });
     setSaving(false);
@@ -384,10 +464,6 @@ export function QuotationBuilder(props: BuilderProps) {
     return () => clearTimeout(t);
   }, [header, lines, dirty, isNew, readOnly]);
 
-  useEffect(() => () => {
-    if (highlightTimer.current) clearTimeout(highlightTimer.current);
-  }, []);
-
   const buildDocument = (): QuoteDocument | null => {
     if (!filledLines.length) {
       toast.error("Add at least one item before exporting.");
@@ -410,16 +486,8 @@ export function QuotationBuilder(props: BuilderProps) {
           <div className="mr-auto min-w-0">
             <div className="flex flex-wrap items-center gap-2">
               <h1 className="truncate text-lg font-semibold tracking-tight sm:text-xl">{quoteNo ?? "New quotation"}</h1>
-              {dirty && !readOnly ? (
-                <span className="inline-flex items-center gap-1 text-xs text-amber-700">
-                  <span className="size-1.5 rounded-full bg-amber-500" /> Unsaved changes
-                </span>
-              ) : null}
               {readOnly ? <Badge tone="amber">Read only</Badge> : null}
             </div>
-            <p className="truncate text-xs text-slate-500">
-              {header.customer_name || "No customer"} · {header.currency} {fmtMoney(totals.grandTotal)}
-            </p>
           </div>
           {id ? (
             <ButtonLink href={`/quotations/new?from=${id}`} variant="outline" title="Duplicate as a new quotation">
@@ -436,7 +504,7 @@ export function QuotationBuilder(props: BuilderProps) {
               <FileUp /> Import
             </Button>
           ) : null}
-          <ExportMenu buildDocument={buildDocument} fileBase={{ quoteNo: quoteNo ?? "Quotation", customer: header.customer_name }} />
+          <ExportMenu buildDocument={buildDocument} fileBase={{ quoteNo: quoteNo ?? "Quotation", customer: header.customer_name, date: header.quote_date }} />
           {!readOnly ? (
             <Button onClick={save} loading={saving} title="Save (Ctrl+S)">
               <Save /> Save
@@ -470,7 +538,7 @@ export function QuotationBuilder(props: BuilderProps) {
                 hidden_columns: (draft.header.hidden_columns ?? []).filter((h) => (HIDEABLE_COLUMNS as readonly string[]).includes(h)),
                 column_titles: Object.fromEntries(Object.entries(draft.header.column_titles ?? {}).filter(([k]) => STANDARD_COLUMNS.includes(k as StandardColumn))),
               });
-              setLines(draft.lines.map((l) => ({ ...l, sheet: l.sheet ?? 0, actual_weight: l.actual_weight ?? "", extra: l.extra ?? {}, fmt: l.fmt ?? {} })));
+              setLines(draft.lines.map((l) => ({ ...l, sheet: l.sheet ?? 0, actual_weight: l.actual_weight ?? "", extra: l.extra ?? {}, fmt: l.fmt ?? {}, overrides: l.overrides ?? {} })));
               setDirty(true);
               toast.success("Draft restored.");
             }}
@@ -481,72 +549,82 @@ export function QuotationBuilder(props: BuilderProps) {
       ) : null}
 
       <fieldset disabled={readOnly} className="grid gap-6">
-        {/* Step 1 — customer */}
+        {/* Customer: one short box */}
         <Card id="step-customer" className="scroll-mt-40">
-          <CardHeader step={1} title="Customer" />
-          <CardBody className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-            <Field label="Customer / company" htmlFor="q-customer" required className="sm:col-span-2">
-              <Input id="q-customer" value={header.customer_name} onChange={(e) => setField("customer_name", e.target.value)} maxLength={160} placeholder="Customer name" />
+          <CardBody className="grid gap-x-3 gap-y-3 p-4 sm:grid-cols-2 lg:grid-cols-12">
+            <Field label="Customer / company" htmlFor="q-customer" required className="sm:col-span-2 lg:col-span-5">
+              <CustomerPicker
+                id="q-customer"
+                value={header.customer_name}
+                disabled={readOnly}
+                details={{ name: header.customer_name, contact_person: header.contact_person, phone: header.customer_phone, email: header.customer_email, address: header.customer_address }}
+                onChange={(name) => setField("customer_name", name)}
+                onPick={pickCustomer}
+              />
             </Field>
-            <Field label="Contact person" htmlFor="q-contact">
+            <Field label="Address" htmlFor="q-address" className="sm:col-span-2 lg:col-span-7">
+              <Input id="q-address" value={header.customer_address} onChange={(e) => setField("customer_address", e.target.value)} maxLength={500} />
+            </Field>
+            <Field label="Contact person" htmlFor="q-contact" className="lg:col-span-3">
               <Input id="q-contact" value={header.contact_person} onChange={(e) => setField("contact_person", e.target.value)} maxLength={120} />
             </Field>
-            <Field label="Reference" htmlFor="q-ref">
-              <Input id="q-ref" value={header.reference} onChange={(e) => setField("reference", e.target.value)} maxLength={120} />
-            </Field>
-            <Field label="Email" htmlFor="q-email">
-              <Input id="q-email" type="email" value={header.customer_email} onChange={(e) => setField("customer_email", e.target.value)} maxLength={160} />
-            </Field>
-            <Field label="Phone" htmlFor="q-phone">
+            <Field label="Phone" htmlFor="q-phone" className="lg:col-span-3">
               <Input id="q-phone" type="tel" value={header.customer_phone} onChange={(e) => setField("customer_phone", e.target.value)} maxLength={60} />
             </Field>
-            <Field label="Address" htmlFor="q-address" className="sm:col-span-2 lg:col-span-4">
-              <Textarea id="q-address" rows={2} value={header.customer_address} onChange={(e) => setField("customer_address", e.target.value)} maxLength={500} />
+            <Field label="Email" htmlFor="q-email" className="lg:col-span-3">
+              <Input id="q-email" type="email" value={header.customer_email} onChange={(e) => setField("customer_email", e.target.value)} maxLength={160} />
             </Field>
-            <Field label="Quotation date" htmlFor="q-date">
-              <Input id="q-date" type="date" value={header.quote_date} onChange={(e) => e.target.value && setField("quote_date", e.target.value)} />
+            <Field label="Reference" htmlFor="q-ref" className="lg:col-span-3">
+              <Input id="q-ref" value={header.reference} onChange={(e) => setField("reference", e.target.value)} maxLength={120} />
             </Field>
-            <Field label="Valid until" htmlFor="q-valid" error={header.valid_until && header.valid_until < header.quote_date ? "Must be after the quotation date" : undefined}>
-              <Input id="q-valid" type="date" min={header.quote_date} value={header.valid_until} onChange={(e) => setField("valid_until", e.target.value)} />
-            </Field>
-          </CardBody>
-        </Card>
-
-        {/* Step 3 — add items */}
-        <Card id="step-items" className="scroll-mt-40">
-          <CardHeader step={2} title="Add items" />
-          <CardBody>
-            <ItemPicker inQuote={inQuote} onAdd={addItem} disabled={readOnly} />
           </CardBody>
         </Card>
       </fieldset>
 
-      {/* Step 4 — sheet */}
-      <section id="step-sheet" className="mt-6 scroll-mt-40">
-        <div className="mb-3 flex flex-wrap items-end justify-between gap-3">
-          <div className="flex items-start gap-3">
-            <span className="mt-0.5 grid size-7 shrink-0 place-items-center rounded-full bg-brand-600 text-xs font-semibold text-white">3</span>
-            <h2 className="mt-1 text-sm font-semibold">Quotation sheet</h2>
+      {/* The sheet: items are added by typing in the Items cell (inventory suggestions) or by Import */}
+      <section id="step-sheet" className="mt-4 scroll-mt-40">
+        {/* Commission: the customer's prices are the China prices plus this commission. */}
+        {!readOnly ? (
+          <div className="mb-2 flex flex-wrap items-center gap-2 text-sm">
+            <label htmlFor="q-commission" className="font-medium text-slate-700">
+              Commission
+            </label>
+            <div className="relative">
+              <input
+                id="q-commission"
+                inputMode="decimal"
+                value={commissionDraft}
+                placeholder="0"
+                onChange={(e) => setCommissionDraft(e.target.value)}
+                onBlur={applyCommission}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    applyCommission();
+                  }
+                }}
+                className="num h-8 w-24 rounded-md border border-slate-300 bg-white pr-7 pl-2.5 text-right outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100"
+              />
+              <span className="pointer-events-none absolute top-1/2 right-2.5 -translate-y-1/2 text-slate-400">%</span>
+            </div>
           </div>
-        </div>
+        ) : null}
         <SheetGrid
-          key={sheetIndex}
+          key={chinaView ? "china" : sheetIndex}
           baseCurrency={company.base_currency}
-          lines={sheetLines}
-          onChange={commitSheetLines}
+          lines={chinaView ? chinaLines : sheetLines}
+          onChange={chinaView ? commitChinaLines : commitSheetLines}
           header={header}
-          totals={sheetTotals}
-          sheetNames={header.sheet_names}
-          activeSheet={sheetIndex}
-          onSelectSheet={setActiveSheet}
+          totals={chinaView ? chinaTotals : sheetTotals}
+          sheetNames={tabNames}
+          activeSheet={chinaView ? 0 : sheetIndex + 1}
+          onSelectSheet={selectTab}
           onAddSheet={addSheet}
-          onRenameSheet={renameSheet}
-          onDeleteSheet={deleteSheet}
+          onRenameSheet={(i, name) => (i === 0 ? toast.info("The China sheet keeps its name.") : renameSheet(i - 1, name))}
+          onDeleteSheet={(i) => (i === 0 ? toast.info("The China sheet can't be deleted.") : deleteSheet(i - 1))}
+          lockTotals={chinaView}
           onColumnsChange={patchColumns}
           readOnly={readOnly}
-          highlightKey={highlightKey}
-          jumpTo={jump}
-          onCursorRow={onCursorRow}
           onUndo={undo}
           onRedo={redo}
           canUndo={history.past.length > 0}
@@ -578,6 +656,8 @@ export function QuotationBuilder(props: BuilderProps) {
               readOnly={readOnly}
               onChange={(next) => setField("adjustments", next)}
               onRateChange={(rate) => setField("exchange_rate", rate)}
+              onCurrencyChange={changeCurrency}
+              rateLoading={rateLoading}
             />
           </CardBody>
         </Card>

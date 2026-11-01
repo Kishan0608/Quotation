@@ -46,7 +46,7 @@ async function writeInventory(xlsxPath: string) {
 
   for (const issue of result.issues) console.warn(`  row ${issue.row}: ${issue.message}`);
 
-  const columns = ["item_code", "description", "weight_kg", "unit_price", "stock_qty", "note"] as const;
+  const columns = ["description", "weight_kg", "unit_price", "stock_qty", "actual_weight", "note"] as const;
   // created_at = now() + n microseconds keeps the rows in Excel order.
   const values = result.rows.map(({ data }, n) =>
     `  (${columns
@@ -79,7 +79,7 @@ async function main() {
     if (process.argv.includes("--print")) {
       for (const { row, data } of result.rows) {
         console.log(
-          [row, data.item_code ?? "", data.description, data.weight_kg ?? "", data.unit_price ?? "", data.stock_qty, data.note ?? ""].join(" | "),
+          [row, data.description, data.weight_kg ?? "", data.unit_price ?? "", data.stock_qty, data.note ?? ""].join(" | "),
         );
       }
     }

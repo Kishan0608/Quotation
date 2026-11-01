@@ -1,7 +1,8 @@
 import type { jsPDF as JsPDF } from "jspdf";
 import type { CellInput, Styles } from "jspdf-autotable";
-import { fmtDate, fmtMoney, fmtQty, fmtWeight } from "../format";
+import { fmtMoney, fmtQty, fmtWeight } from "../format";
 import { amountInWords } from "./currency";
+import { fitInside, pngSize } from "./signature";
 import { exportColumns, exportMerges, sheetColumnId } from "./export-columns";
 import {
   adjustmentTitle,
@@ -176,8 +177,6 @@ export async function buildQuotationPdf(
   ];
   const details: [string, string][] = [
     ["Quotation No", doc.quoteNo],
-    ["Date", fmtDate(header.quote_date)],
-    ["Valid Until", fmtDate(header.valid_until)],
     ["Reference", header.reference],
     ["Currency", header.currency],
     ["Prepared By", doc.preparedBy ?? ""],
@@ -433,6 +432,12 @@ export async function buildQuotationPdf(
     align: "center",
     maxWidth: 62,
   });
+  // The uploaded signature (Company settings), centred above the line.
+  const sig = company.signature_image ? pngSize(company.signature_image) : null;
+  if (company.signature_image && sig) {
+    const { width, height } = fitInside(sig, 52, 13.5);
+    pdf.addImage(company.signature_image, "PNG", sx + 31 - width / 2, y + 19.5 - height, width, height);
+  }
   pdf.setDrawColor(...INK);
   pdf.setLineWidth(0.3);
   pdf.line(sx, y + 20, pageW - M, y + 20);

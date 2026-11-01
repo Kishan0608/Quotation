@@ -42,6 +42,8 @@ export type CompanySettingsRow = {
   default_terms: string | null;
   bank_details: string | null;
   footer_note: string | null;
+  /** PNG data URL printed above "Authorised Signatory" (null until uploaded). */
+  signature_image: string | null;
   updated_at: string;
 };
 
@@ -77,7 +79,6 @@ export type PipeSizeRow = {
 
 export type InventoryItemRow = {
   id: string;
-  item_code: string | null;
   description: string;
   weight_kg: number | null;
   unit_price: number | null;
@@ -85,16 +86,28 @@ export type InventoryItemRow = {
   /** As written by the supplier, e.g. "5.5-5.6MM". */
   actual_weight: string | null;
   note: string | null;
-  total_weight_kg: number;
-  total_amount: number;
   created_at: string;
   updated_at: string;
 };
 
-export type InventoryItemInsert = Omit<InventoryItemRow, "id" | "total_weight_kg" | "total_amount" | "created_at" | "updated_at"> & {
+export type InventoryItemInsert = Omit<InventoryItemRow, "id" | "created_at" | "updated_at"> & {
   /** Set by the server for bulk imports so rows keep their order. */
   created_at?: string;
 };
+
+export type CustomerRow = {
+  id: string;
+  name: string;
+  contact_person: string | null;
+  phone: string | null;
+  email: string | null;
+  address: string | null;
+  note: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type CustomerInsert = Omit<CustomerRow, "id" | "created_at" | "updated_at">;
 
 export type QuotationRow = {
   id: string;
@@ -165,6 +178,8 @@ export type QuotationItemRow = {
   extra: Record<string, string>;
   /** Cell formatting, by column id. */
   fmt: Record<string, import("../quotation/types").CellFmt>;
+  /** Total KG / Total Amount / Final Total typed over the calculation. */
+  overrides: import("../quotation/types").LineOverrides;
   actual_weight: string | null;
   total_weight_kg: number;
   amount: number;
@@ -191,6 +206,7 @@ export type Database = {
         Omit<PipeSizeRow, "id" | "created_at" | "updated_at"> & { id?: number }
       >;
       inventory_items: Table<InventoryItemRow, InventoryItemInsert>;
+      customers: Table<CustomerRow, CustomerInsert>;
       quotations: Table<QuotationRow, Partial<QuotationRow> & { customer_name: string }>;
       quotation_items: Table<
         QuotationItemRow,

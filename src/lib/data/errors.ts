@@ -20,6 +20,11 @@ export function dbErrorMessage(error: DbError, fallback = "Something went wrong.
       return error.message ?? fallback;
     case "PGRST116":
       return "The record was not found. It may have been deleted.";
+    case "PGRST205":
+    case "PGRST204":
+    case "42P01":
+    case "42703":
+      return "This part of the database is not set up yet. Run the newest file in supabase/migrations in Supabase → SQL Editor.";
     default:
       if (process.env.NODE_ENV !== "production" && error.message) return error.message;
       return fallback;

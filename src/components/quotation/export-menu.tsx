@@ -8,7 +8,7 @@ import type { QuoteDocument } from "@/lib/quotation/types";
 
 type Props = {
   buildDocument: () => QuoteDocument | null;
-  fileBase: { quoteNo: string; customer: string };
+  fileBase: { quoteNo: string; customer: string; date: string };
 };
 
 /** Excel / PDF download. The file has exactly the sheet's columns (delete a column on the sheet to leave it out). */
@@ -41,11 +41,11 @@ export function ExportMenu({ buildDocument, fileBase }: Props) {
       if (kind === "xlsx") {
         const { buildQuotationWorkbook } = await import("@/lib/quotation/export-excel");
         const buffer = await buildQuotationWorkbook(doc);
-        downloadBlob(new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }), quoteFileName(fileBase.quoteNo, fileBase.customer, "xlsx"));
+        downloadBlob(new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }), quoteFileName(fileBase.quoteNo, fileBase.customer, fileBase.date, "xlsx"));
       } else {
         const { buildQuotationPdf } = await import("@/lib/quotation/export-pdf");
         const blob = await buildQuotationPdf(doc, { orientation });
-        downloadBlob(blob, quoteFileName(fileBase.quoteNo, fileBase.customer, "pdf"));
+        downloadBlob(blob, quoteFileName(fileBase.quoteNo, fileBase.customer, fileBase.date, "pdf"));
       }
       toast.success(kind === "xlsx" ? "Excel file downloaded." : "PDF downloaded.");
       setOpen(false);

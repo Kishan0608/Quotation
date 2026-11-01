@@ -18,6 +18,9 @@ const nextConfig: NextConfig = {
   cacheComponents: false,
   poweredByHeader: false,
   reactStrictMode: true,
+  // `next dev` only serves its code files to localhost; other PCs on the office network open the
+  // app by IP (http://192.168.1.50:3000), so the local network's addresses are allowed too.
+  allowedDevOrigins: ["192.168.*.*", "10.*.*.*"],
   // Run in plain Node: exceljs, the PDF reader, the OCR engine (it starts worker threads) and the
   // image tools used to clean up photos and to turn scanned PDF pages into pictures.
   serverExternalPackages: ["exceljs", "unpdf", "tesseract.js", "sharp", "@napi-rs/canvas"],

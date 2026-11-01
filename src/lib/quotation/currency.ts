@@ -1,4 +1,7 @@
-export const CURRENCIES: { code: string; name: string; major: string; minor: string }[] = [
+/** The currencies a quotation is made in: the RMB total is converted to one of these. */
+export const QUOTE_CURRENCIES = ["INR", "USD"] as const;
+
+export const CURRENCIES:{ code: string; name: string; major: string; minor: string }[] = [
   { code: "CNY", name: "Chinese Yuan", major: "Yuan", minor: "Fen" },
   { code: "USD", name: "US Dollar", major: "US Dollars", minor: "Cents" },
   { code: "INR", name: "Indian Rupee", major: "Rupees", minor: "Paise" },

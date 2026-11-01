@@ -38,11 +38,10 @@ type Props = {
   total: number;
   loadError: string | null;
   filters: InventoryFilters;
-  canEdit: boolean;
   baseCurrency: string;
 };
 
-export function InventoryView({ rows: initialRows, total, loadError, filters, canEdit, baseCurrency }: Props) {
+export function InventoryView({ rows: initialRows, total, loadError, filters, baseCurrency }: Props) {
   const router = useRouter();
   const pathname = usePathname();
   const [pending, startTransition] = useTransition();
@@ -121,18 +120,7 @@ export function InventoryView({ rows: initialRows, total, loadError, filters, ca
 
   const hasFilters = Boolean(filters.q);
 
-  const pageTotals = useMemo(
-    () =>
-      rows.reduce(
-        (acc, r) => ({
-          qty: acc.qty + Number(r.stock_qty),
-          kg: acc.kg + Number(r.total_weight_kg),
-          value: acc.value + Number(r.total_amount),
-        }),
-        { qty: 0, kg: 0, value: 0 },
-      ),
-    [rows],
-  );
+  const pageQty = useMemo(() => rows.reduce((sum, r) => sum + Number(r.stock_qty), 0), [rows]);
 
   const exportHref = `/api/inventory/export?${new URLSearchParams(
     Object.entries({ q: filters.q }).filter(([, v]) => v) as [string, string][],
@@ -183,16 +171,12 @@ export function InventoryView({ rows: initialRows, total, loadError, filters, ca
             <a href={exportHref} className={buttonClasses("outline", "md")} download>
               <Download /> Export
             </a>
-            {canEdit ? (
-              <>
-                <Button variant="outline" onClick={() => setImportOpen(true)}>
-                  <FileUp /> Import Excel
-                </Button>
-                <Button onClick={() => setForm({ kind: "create" })}>
-                  <Plus /> Add item
-                </Button>
-              </>
-            ) : null}
+            <Button variant="outline" onClick={() => setImportOpen(true)}>
+              <FileUp /> Import Excel
+            </Button>
+            <Button onClick={() => setForm({ kind: "create" })}>
+              <Plus /> Add item
+            </Button>
           </div>
         </div>
 
@@ -206,7 +190,7 @@ export function InventoryView({ rows: initialRows, total, loadError, filters, ca
               title={hasFilters ? "No items match your filters" : "Your inventory is empty"}
               description={hasFilters ? "Try another search." : "Add an item or import an Excel file."}
               action={
-                canEdit && !hasFilters ? (
+                !hasFilters ? (
                   <div className="flex gap-2">
                     <Button variant="outline" onClick={() => setImportOpen(true)}>
                       <FileUp /> Import Excel
@@ -219,18 +203,17 @@ export function InventoryView({ rows: initialRows, total, loadError, filters, ca
               }
             />
           ) : (
-            <table className="w-full min-w-[1060px] text-sm">
+            <table className="w-full min-w-[860px] text-sm">
               <thead className="sticky top-0 z-10 bg-slate-50 text-left text-xs text-slate-500">
                 <tr className="border-b border-slate-200">
-                  {sortHeader("Items", "description", "pl-4")}
-                  {sortHeader("Wt (kg)", "weight", "w-28 text-right")}
-                  {sortHeader(`Price/pc (${baseCurrency})`, "price", "w-32 text-right")}
-                  {sortHeader("Quantity", "quantity", "w-28 text-right")}
-                  <th className="w-28 px-2 py-2.5 text-right font-medium">Total kg</th>
-                  {sortHeader("Amount", "amount", "w-32 text-right")}
-                  <th className="w-40 px-2 py-2.5 font-medium">Actual weight</th>
-                  <th className="w-36 px-2 py-2.5 font-medium">Note / Length</th>
-                  <th className="w-28 px-3 py-2.5 text-right font-medium">
+                  {/* Shares of the width, so the columns spread evenly instead of bunching on the right. */}
+                  {sortHeader("Items", "description", "w-[24%] pl-4")}
+                  {sortHeader("Wt (kg)", "weight", "w-[11%] pr-3 text-right")}
+                  {sortHeader(`Price/pc (${baseCurrency})`, "price", "w-[13%] pr-3 text-right")}
+                  {sortHeader("Quantity", "quantity", "w-[11%] pr-3 text-right")}
+                  <th className="w-[16%] py-2.5 pr-2 pl-10 font-medium">Actual weight</th>
+                  <th className="w-[15%] py-2.5 pr-2 pl-4 font-medium">Note / Length</th>
+                  <th className="w-[10%] px-3 py-2.5 text-right font-medium">
                     <span className="sr-only">Actions</span>
                   </th>
                 </tr>
@@ -242,36 +225,32 @@ export function InventoryView({ rows: initialRows, total, loadError, filters, ca
                       <span className="font-medium text-slate-900">{row.description}</span>
                     </td>
                     <td className="px-1 py-1.5">
-                      <InlineCell kind="number" label="Weight per piece" editable={canEdit} value={row.weight_kg} display={fmtWeight(row.weight_kg)} onSave={(v) => saveField(row, "weight_kg", v)} />
+                      <InlineCell kind="number" label="Weight per piece" editable value={row.weight_kg} display={fmtWeight(row.weight_kg)} onSave={(v) => saveField(row, "weight_kg", v)} />
                     </td>
                     <td className="px-1 py-1.5">
-                      <InlineCell kind="number" label="Unit price" editable={canEdit} value={row.unit_price} display={row.unit_price == null ? "" : fmtMoney(row.unit_price)} onSave={(v) => saveField(row, "unit_price", v)} />
+                      <InlineCell kind="number" label="Unit price" editable value={row.unit_price} display={row.unit_price == null ? "" : fmtMoney(row.unit_price)} onSave={(v) => saveField(row, "unit_price", v)} />
                     </td>
                     <td className="px-1 py-1.5">
-                      <InlineCell kind="number" label="Quantity" editable={canEdit} value={row.stock_qty} display={fmtQty(row.stock_qty)} onSave={(v) => saveField(row, "stock_qty", v ?? 0)} />
+                      <InlineCell kind="number" label="Quantity" editable value={row.stock_qty} display={fmtQty(row.stock_qty)} onSave={(v) => saveField(row, "stock_qty", v ?? 0)} />
                     </td>
-                    <td className="num px-2 py-1.5 text-right text-slate-600">{fmtWeight(row.total_weight_kg)}</td>
-                    <td className="num px-2 py-1.5 text-right font-medium">{fmtMoney(row.total_amount)}</td>
-                    <td className="px-1 py-1.5 text-xs">
-                      <InlineCell kind="text" align="left" label="Actual weight" editable={canEdit} value={row.actual_weight} display={row.actual_weight ?? ""} onSave={(v) => saveField(row, "actual_weight", v)} />
+                    <td className="py-1.5 pr-1 pl-8 text-xs">
+                      <InlineCell kind="text" align="left" label="Actual weight" editable value={row.actual_weight} display={row.actual_weight ?? ""} onSave={(v) => saveField(row, "actual_weight", v)} />
                     </td>
-                    <td className="px-1 py-1.5 text-xs">
-                      <InlineCell kind="text" align="left" label="Note / Length" editable={canEdit} value={row.note} display={row.note ?? ""} onSave={(v) => saveField(row, "note", v)} />
+                    <td className="py-1.5 pr-1 pl-2 text-xs">
+                      <InlineCell kind="text" align="left" label="Note / Length" editable value={row.note} display={row.note ?? ""} onSave={(v) => saveField(row, "note", v)} />
                     </td>
                     <td className="px-3 py-1.5">
-                      {canEdit ? (
-                        <div className="flex justify-end gap-0.5 opacity-70 transition-opacity group-hover:opacity-100">
-                          <Button variant="ghost" size="icon-sm" title="Edit" aria-label={`Edit ${row.description}`} onClick={() => setForm({ kind: "edit", item: row })}>
-                            <Pencil />
-                          </Button>
-                          <Button variant="ghost" size="icon-sm" title="Duplicate" aria-label={`Duplicate ${row.description}`} onClick={() => setForm({ kind: "duplicate", item: row })}>
-                            <Copy />
-                          </Button>
-                          <Button variant="ghost" size="icon-sm" title="Delete" aria-label={`Delete ${row.description}`} className="hover:bg-red-50 hover:text-red-600" onClick={() => setConfirmIds([row.id])}>
-                            <Trash2 />
-                          </Button>
-                        </div>
-                      ) : null}
+                      <div className="flex justify-end gap-0.5 opacity-70 transition-opacity group-hover:opacity-100">
+                        <Button variant="ghost" size="icon-sm" title="Edit" aria-label={`Edit ${row.description}`} onClick={() => setForm({ kind: "edit", item: row })}>
+                          <Pencil />
+                        </Button>
+                        <Button variant="ghost" size="icon-sm" title="Duplicate" aria-label={`Duplicate ${row.description}`} onClick={() => setForm({ kind: "duplicate", item: row })}>
+                          <Copy />
+                        </Button>
+                        <Button variant="ghost" size="icon-sm" title="Delete" aria-label={`Delete ${row.description}`} className="hover:bg-red-50 hover:text-red-600" onClick={() => setConfirmIds([row.id])}>
+                          <Trash2 />
+                        </Button>
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -281,9 +260,7 @@ export function InventoryView({ rows: initialRows, total, loadError, filters, ca
                   <td colSpan={3} className="px-3 py-2.5 text-right text-xs text-slate-500">
                     Page totals
                   </td>
-                  <td className="num px-3 py-2.5 text-right">{fmtQty(pageTotals.qty)}</td>
-                  <td className="num px-2 py-2.5 text-right">{fmtWeight(pageTotals.kg)}</td>
-                  <td className="num px-2 py-2.5 text-right">{fmtMoney(pageTotals.value)}</td>
+                  <td className="num px-3 py-2.5 text-right">{fmtQty(pageQty)}</td>
                   <td colSpan={3} />
                 </tr>
               </tfoot>

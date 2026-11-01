@@ -14,7 +14,6 @@ import { Pagination } from "@/components/ui/pagination";
 import { cn } from "@/lib/cn";
 import type { QuotationFilters, QuotationListRow } from "@/lib/data/quotations";
 import { fmtDate, fmtMoney, fmtQty, fmtWeight } from "@/lib/format";
-import type { AppRole } from "@/lib/supabase/database.types";
 import { deleteQuotation } from "./actions";
 
 type Props = {
@@ -22,11 +21,9 @@ type Props = {
   total: number;
   filters: QuotationFilters;
   loadError: string | null;
-  userId: string;
-  role: AppRole;
 };
 
-export function QuotationsList({ rows, total, filters, loadError, userId, role }: Props) {
+export function QuotationsList({ rows, total, filters, loadError }: Props) {
   const router = useRouter();
   const pathname = usePathname();
   const [pending, startTransition] = useTransition();
@@ -48,7 +45,6 @@ export function QuotationsList({ rows, total, filters, loadError, userId, role }
     startTransition(() => router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false }));
   };
 
-  const canModify = (row: QuotationListRow) => role === "admin" || (role === "editor" && row.created_by === userId);
 
   const runDelete = async () => {
     if (!toDelete) return;
@@ -90,7 +86,7 @@ export function QuotationsList({ rows, total, filters, loadError, userId, role }
             title={filters.q ? "No quotations match" : "No quotations yet"}
             description={filters.q ? "Try another search." : undefined}
             action={
-              role !== "viewer" && !filters.q ? (
+              !filters.q ? (
                 <ButtonLink href="/quotations/new">
                   <FilePlus2 /> New quotation
                 </ButtonLink>
@@ -114,7 +110,6 @@ export function QuotationsList({ rows, total, filters, loadError, userId, role }
             </thead>
             <tbody className="divide-y divide-slate-100">
               {rows.map((row) => {
-                const expired = row.valid_until && row.valid_until < new Date().toISOString().slice(0, 10);
                 return (
                   <tr key={row.id} className="group hover:bg-slate-50/80">
                     <td className="px-4 py-3">
@@ -123,7 +118,6 @@ export function QuotationsList({ rows, total, filters, loadError, userId, role }
                       </Link>
                       <div className="text-xs text-slate-500">
                         {fmtDate(row.quote_date)}
-                        {row.valid_until ? <span className={cn(expired && "text-amber-700")}> · valid to {fmtDate(row.valid_until)}</span> : null}
                       </div>
                     </td>
                     <td className="px-3 py-3">
@@ -142,16 +136,12 @@ export function QuotationsList({ rows, total, filters, loadError, userId, role }
                         <ButtonLink href={`/quotations/${row.id}`} variant="outline" size="sm">
                           Open
                         </ButtonLink>
-                        {role !== "viewer" ? (
-                          <ButtonLink href={`/quotations/new?from=${row.id}`} variant="ghost" size="icon-sm" title="Duplicate" aria-label={`Duplicate ${row.quote_no}`}>
-                            <Copy />
-                          </ButtonLink>
-                        ) : null}
-                        {canModify(row) ? (
-                          <Button variant="ghost" size="icon-sm" title="Delete" aria-label={`Delete ${row.quote_no}`} className="hover:bg-red-50 hover:text-red-600" onClick={() => setToDelete(row)}>
-                            <Trash2 />
-                          </Button>
-                        ) : null}
+                        <ButtonLink href={`/quotations/new?from=${row.id}`} variant="ghost" size="icon-sm" title="Duplicate" aria-label={`Duplicate ${row.quote_no}`}>
+                          <Copy />
+                        </ButtonLink>
+                        <Button variant="ghost" size="icon-sm" title="Delete" aria-label={`Delete ${row.quote_no}`} className="hover:bg-red-50 hover:text-red-600" onClick={() => setToDelete(row)}>
+                          <Trash2 />
+                        </Button>
                       </div>
                     </td>
                   </tr>

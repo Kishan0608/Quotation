@@ -6,7 +6,6 @@ import { resolvePicks, toImportRows, type AiLine } from "./ai-rows";
 
 const item = (id: string, description: string, note: string | null = null, extra: Partial<PickerItem> = {}): PickerItem => ({
   id,
-  item_code: null,
   description,
   weight_kg: 1,
   unit_price: 10,
@@ -21,7 +20,7 @@ const inventory = [
   item("elbow4sch", '4"XSCH40 90°', "Standard"),
   item("elbow2", '2"XSCH40', "Standard"),
   item("tee2", '2"XSCH40 TEE'),
-  item("tee2copy", '2"XSCH40 TEE', null, { item_code: "T2" }),
+  item("tee2copy", '2"XSCH40 TEE'),
   item("redCon", '6"X3"XSCH40 REDUCER', "CONCENTRIC"),
   item("redEcc", '6"X3"XSCH40 REDUCER', "ECCENTRIC"),
   item("bend1280", "457X5.8MM", "1280MM"),
@@ -206,6 +205,45 @@ describe("toImportRows", () => {
     assert.equal(row.status, "check");
     assert.ok(row.issues.includes("fuzzy"));
     assert.ok(["tee2", "tee2copy"].includes(row.matches[0].item.id));
+  });
+
+  it("an AI pick that doesn't resolve but points at the standard matcher's sure item is a match", () => {
+    const rows = toImportRows(
+      [
+        // Right name with other spacing and a wrong number; right number with a garbled name.
+        line({ source: "TEE,EQ,BW,CS,A234,WPB,2IN,40", size_inch: "2", items: [{ n: 999, name: '2" X SCH40 TEE (EQ)' }] }),
+        line({ source: "TEE,EQ,BW,CS,A234,WPB,2IN,40", size_inch: "2", items: [{ n: n("tee2"), name: "2IN SCH40 EQUAL TEE" }] }),
+      ],
+      catalog,
+    );
+    // "(EQ)" makes the first name differ: still red. The second points at the item by number.
+    assert.equal(rows[0].status, "check");
+    assert.equal(rows[1].status, "matched");
+    assert.deepEqual(rows[1].issues, []);
+    const [spaced] = toImportRows([line({ source: "TEE,EQ,BW,CS,A234,WPB,2IN,40", size_inch: "2", items: [{ n: 999, name: '2" X SCH40 TEE' }] })], catalog);
+    assert.equal(spaced.status, "matched");
+  });
+
+  it('"Standard" asked for an item stocked in one mm length only is that item; with a Standard length in stock it is not', () => {
+    const inv = [...inventory, item("elbow76", "76X4MM", "190MM"), item("e165short", "165X4.75MM", "440MM"), item("e165std", "165X4.75MM", "Standard")];
+    const cat = buildCatalog(inv);
+    const at = (id: string) => ({ n: cat.items.findIndex((i) => i.id === id) + 1, name: inv.find((i) => i.id === id)!.description });
+    const [only, other] = toImportRows(
+      [
+        line({ source: "76X4MM", size_inch: "2 1/2", length: "Standard", items: [at("elbow76")], differences: ["190MM long vs Standard"] }),
+        line({ source: "165X4.75MM", size_inch: "6", length: "Standard", items: [at("e165short")], differences: ["440MM long vs Standard"] }),
+      ],
+      cat,
+    );
+    assert.equal(only.status, "matched");
+    assert.equal(only.matches[0].item.id, "elbow76");
+    assert.equal(only.length, undefined);
+    assert.equal(other.status, "check");
+  });
+
+  it("an AI pick that doesn't resolve and names a difference stays to check", () => {
+    const [row] = toImportRows([line({ source: "TEE,EQ,BW,CS,A234,WPB,2IN,40", size_inch: "2", items: [{ n: n("tee2"), name: "x" }], differences: ["SCH80 vs SCH40"] })], catalog);
+    assert.equal(row.status, "check");
   });
 
   it("when the standard matcher is sure of another item, both are offered (the AI's pick first when it passes the checks)", () => {

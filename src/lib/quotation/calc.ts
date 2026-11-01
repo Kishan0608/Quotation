@@ -7,10 +7,11 @@ type PricingInputs = Pick<QuoteHeader, "pricing_basis" | "rate_per_kg" | "margin
 export const currencyLabel = (code: string) => (code === "CNY" ? "RMB" : code);
 
 /**
- * Automatic selling price for one line, in RMB (the company base currency):
- *   base  = inventory price per piece             (pricing basis "piece")
+ * Automatic customer price for one line, in RMB (the company base currency):
+ *   base  = China (inventory) price per piece      (pricing basis "piece")
  *         = unit weight (kg) x rate per kg         (pricing basis "kg")
- *   price = base x (1 + margin %), rounded to 2 decimals.
+ *   price = base / (1 - commission %), rounded to 2 decimals: the commission is part of the
+ *           customer price (0.80 with 20% -> 1.00). header.margin_pct holds the commission.
  * Lines stay in RMB; the total is converted to the quotation currency at the end.
  */
 export function autoUnitPrice(line: Pick<QuoteLine, "base_price" | "unit_weight_kg">, pricing: PricingInputs) {
@@ -21,8 +22,8 @@ export function autoUnitPrice(line: Pick<QuoteLine, "base_price" | "unit_weight_
     base = line.base_price;
   }
   if (base == null) return null;
-  const margin = 1 + (pricing.margin_pct || 0) / 100;
-  return round2(base * margin);
+  const commission = Math.min(Math.max(pricing.margin_pct || 0, 0), 95) / 100;
+  return round2(base / (1 - commission));
 }
 
 /** Re-prices every line that the user has not overridden by hand. */
@@ -35,11 +36,14 @@ export function repriceLines(lines: QuoteLine[], pricing: PricingInputs, force =
   });
 }
 
-export const lineAmount = (line: Pick<QuoteLine, "qty" | "unit_price">) => round2((line.qty ?? 0) * (line.unit_price ?? 0));
-/** Final Total of a line = its Total Amount (quotation_items.amount). */
-export const lineNet = (line: Pick<QuoteLine, "qty" | "unit_price">) => lineAmount(line);
-export const lineWeight = (line: Pick<QuoteLine, "qty" | "unit_weight_kg">) =>
-  round3((line.qty ?? 0) * (line.unit_weight_kg ?? 0));
+/** The calculations; a value typed over the cell (line.overrides) replaces them. */
+export const calcAmount = (line: Pick<QuoteLine, "qty" | "unit_price">) => round2((line.qty ?? 0) * (line.unit_price ?? 0));
+export const calcWeight = (line: Pick<QuoteLine, "qty" | "unit_weight_kg">) => round3((line.qty ?? 0) * (line.unit_weight_kg ?? 0));
+
+export const lineAmount = (line: Pick<QuoteLine, "qty" | "unit_price" | "overrides">) => line.overrides?.amount ?? calcAmount(line);
+/** Final Total of a line = its Total Amount, unless a Final Total was typed. */
+export const lineNet = (line: Pick<QuoteLine, "qty" | "unit_price" | "overrides">) => line.overrides?.net ?? lineAmount(line);
+export const lineWeight = (line: Pick<QuoteLine, "qty" | "unit_weight_kg" | "overrides">) => line.overrides?.total_weight ?? calcWeight(line);
 
 /** Same arithmetic and rounding as public.save_quotation() in the database. */
 const KIND_ORDER: Record<AdjustmentKind, number> = { discount: 0, charge: 1, tax: 2 };
@@ -104,6 +108,7 @@ export function isBlankLine(line: QuoteLine) {
     !line.unit_price &&
     !line.remarks.trim() &&
     !line.actual_weight.trim() &&
+    !Object.keys(line.overrides ?? {}).length &&
     !Object.values(line.extra ?? {}).some((v) => v.trim())
   );
 }

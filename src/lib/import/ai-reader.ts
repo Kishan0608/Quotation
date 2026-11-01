@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { PickerItem } from "@/lib/inventory/types";
 import { AI_MODEL, AI_RESPONSE_SCHEMA, buildCatalog, systemInstruction, textRequests } from "./ai-prompt";
 import { aiAnswerSchema, toImportRows, type AiLine } from "./ai-rows";
+import { geminiTurn, retryAfterMs, waitFor } from "./gemini-limit";
 import { excelRows, IMPORT_MAX_ROWS, type ImportKind } from "./extract";
 import type { ImportRow } from "./match";
 
@@ -11,8 +12,9 @@ const ENDPOINT = `https://generativelanguage.googleapis.com/v1beta/models/${AI_M
  * The whole AI read, retries included; after that the standard reader takes over. Text and tables
  * get longer (the standard reader is instant for them); a PDF or photo leaves time for OCR.
  */
-const TIMEOUT_MS = { text: 80_000, scan: 45_000 };
-const PARALLEL_REQUESTS = 5;
+const TIMEOUT_MS = { text: 95_000, scan: 75_000 };
+// Two parts at a time: the free tier allows 15 requests a minute (see gemini-limit.ts).
+const PARALLEL_REQUESTS = 2;
 const MAX_LINES = 1_000;
 const MAX_LINE_CHARS = 500;
 /** About 500k tokens: an inventory too big for one request is left to the standard reader. */
@@ -63,7 +65,10 @@ async function documentRequests(buf: Buffer, kind: ImportKind, mime: string): Pr
   return { requests: [[{ text: "The customer's document is attached." }, { inlineData: { mimeType: type, data: data.toString("base64") } }]], text: "" };
 }
 
-/** One request to Gemini; one retry when it is busy or the network drops. */
+/**
+ * One request to Gemini, in its turn under the free tier's per-minute limit; one retry when it is
+ * busy (after the wait Google asks for) or the network drops.
+ */
 async function ask(key: string, system: string, parts: Part[], signal: AbortSignal): Promise<AiLine[]> {
   const body = JSON.stringify({
     systemInstruction: { parts: [{ text: system }] },
@@ -80,14 +85,15 @@ async function ask(key: string, system: string, parts: Part[], signal: AbortSign
     const retry = attempt === 0 && !signal.aborted;
     let res: Response;
     try {
+      await geminiTurn(signal);
       res = await fetch(ENDPOINT, { method: "POST", headers: { "content-type": "application/json", "x-goog-api-key": key }, body, signal });
     } catch (e) {
       if (retry && !signal.aborted) continue;
       throw e;
     }
     if ((res.status === 429 || res.status >= 500) && retry) {
-      await res.body?.cancel();
-      await new Promise((r) => setTimeout(r, 1500));
+      const wait = res.status === 429 ? await retryAfterMs(res) : (await res.body?.cancel(), 1500);
+      await waitFor(wait, signal);
       continue;
     }
     if (!res.ok) throw new Error(`Gemini HTTP ${res.status}: ${(await res.text()).slice(0, 300)}`);

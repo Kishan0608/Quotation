@@ -6,7 +6,7 @@ export const metadata: Metadata = { title: "Sign in" };
 
 const ERRORS: Record<string, string> = {
   link: "That sign-in link is invalid or has expired. Please request a new one.",
-  inactive: "Your account is not active. Contact your administrator.",
+  inactive: "This account can't use the panel. Sign in with the panel's account.",
 };
 
 const FEATURES = [

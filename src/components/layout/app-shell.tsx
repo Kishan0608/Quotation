@@ -19,26 +19,19 @@ import { usePathname } from "next/navigation";
 import { useEffect, useState, type ReactNode } from "react";
 import { signOut } from "@/app/login/actions";
 import { cn } from "@/lib/cn";
-import { ROLE_LABELS } from "@/lib/auth/roles";
-import type { AppRole } from "@/lib/supabase/database.types";
 
-type NavItem = { href: string; label: string; icon: LucideIcon; minRole?: AppRole };
+type NavItem = { href: string; label: string; icon: LucideIcon };
 
 const MAIN_NAV: NavItem[] = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { href: "/quotations", label: "Quotations", icon: FileText },
+  { href: "/customers", label: "Customers", icon: Users },
   { href: "/inventory", label: "Inventory", icon: Boxes },
   { href: "/sizes", label: "Pipe size chart", icon: Ruler },
-];
-
-const ADMIN_NAV: NavItem[] = [
   { href: "/settings", label: "Company settings", icon: Building2 },
-  { href: "/users", label: "Users & roles", icon: Users },
 ];
 
-const RANK: Record<AppRole, number> = { viewer: 1, editor: 2, admin: 3 };
-
-type ShellUser = { name: string; email: string; role: AppRole };
+type ShellUser = { name: string; email: string };
 
 export function AppShell({ user, companyName, children }: { user: ShellUser; companyName: string; children: ReactNode }) {
   const pathname = usePathname();
@@ -61,9 +54,7 @@ export function AppShell({ user, companyName, children }: { user: ShellUser; com
   const isActive = (item: NavItem) => pathname === item.href || pathname.startsWith(`${item.href}/`);
 
   const renderNav = (items: NavItem[]) =>
-    items
-      .filter((item) => !item.minRole || RANK[user.role] >= RANK[item.minRole])
-      .map((item) => {
+    items.map((item) => {
         const active = isActive(item);
         const Icon = item.icon;
         return (
@@ -103,12 +94,6 @@ export function AppShell({ user, companyName, children }: { user: ShellUser; com
       </div>
       <nav className="scroll-thin flex-1 space-y-6 overflow-y-auto px-3 py-4" aria-label="Main">
         <div className="space-y-1">{renderNav(MAIN_NAV)}</div>
-        {user.role === "admin" ? (
-          <div>
-            <p className="mb-2 px-3 text-[11px] font-semibold tracking-wider text-brand-200/40 uppercase">Administration</p>
-            <div className="space-y-1">{renderNav(ADMIN_NAV)}</div>
-          </div>
-        ) : null}
       </nav>
       <div className="border-t border-white/10 p-3">
         <Link href="/account" className="flex items-center gap-3 rounded-lg px-2 py-2 hover:bg-white/5">
@@ -117,7 +102,7 @@ export function AppShell({ user, companyName, children }: { user: ShellUser; com
           </span>
           <div className="min-w-0 flex-1">
             <p className="truncate text-sm font-medium">{user.name || user.email}</p>
-            <p className="truncate text-[11px] text-brand-200/60">{ROLE_LABELS[user.role]}</p>
+            {user.name ? <p className="truncate text-[11px] text-brand-200/60">{user.email}</p> : null}
           </div>
         </Link>
         <form action={signOut}>

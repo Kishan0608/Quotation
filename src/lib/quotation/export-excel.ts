@@ -1,6 +1,6 @@
 import type { Alignment, Borders, Cell, Fill, Font, Worksheet } from "exceljs";
-import { fmtDate } from "../format";
 import { amountInWords } from "./currency";
+import { fitInside, pngSize } from "./signature";
 import { exportColumns, exportMerges, sheetColumnId, type ExportColumn } from "./export-columns";
 import {
   adjustmentTitle,
@@ -249,8 +249,6 @@ export async function buildQuotationWorkbook(
     ].filter((x) => x.text);
     const details: [string, string][] = [
       ["Quotation No", doc.quoteNo],
-      ["Date", fmtDate(header.quote_date)],
-      ["Valid Until", fmtDate(header.valid_until)],
       ["Reference", header.reference],
       ["Currency", header.currency],
       ["Prepared By", doc.preparedBy ?? ""],
@@ -326,22 +324,23 @@ export async function buildQuotationWorkbook(
           case "index":
             cell.value = idx + 1;
             break;
+          // A value typed over the calculation goes in as that value, not the formula.
           case "totalWeight":
-            cell.value = {
+            cell.value = line.overrides?.total_weight != null ? line.overrides.total_weight : {
               formula: `${ref(qtyCol, r, line.qty ?? 0)}*${ref(uwCol, r, line.unit_weight_kg ?? 0)}`,
               result: lineWeight(line),
             };
             cell.numFmt = "#,##0.000";
             break;
           case "amount":
-            cell.value = {
+            cell.value = line.overrides?.amount != null ? line.overrides.amount : {
               formula: `ROUND(${ref(qtyCol, r, line.qty ?? 0)}*${ref(priceCol, r, line.unit_price ?? 0)},2)`,
               result: lineAmount(line),
             };
             cell.numFmt = "#,##0.00";
             break;
           case "net": // Final Total = Total Amount
-            cell.value = {
+            cell.value = line.overrides?.net != null ? line.overrides.net : {
               formula: ref(amountColL, r, lineAmount(line)),
               result: lineNet(line),
             };
@@ -380,6 +379,8 @@ export async function buildQuotationWorkbook(
     });
     const lastItemRow = r - 1;
     const hasItems = lines.length > 0;
+    // Excel's filter buttons on the item table's headings (sort and filter in Excel itself).
+    if (hasItems) ws.autoFilter = { from: { row: headerRow, column: 1 }, to: { row: lastItemRow, column: n } };
     const sum = (letter: string) =>
       hasItems ? `SUM(${letter}${firstItemRow}:${letter}${lastItemRow})` : "0";
 
@@ -605,6 +606,22 @@ export async function buildQuotationWorkbook(
     const forCell = merge(r, signFrom, n);
     forCell.value = `For ${company.company_name}`;
     style(forCell, { bold: true }, { horizontal: "center" });
+    // The uploaded signature (Company settings) in the two rows above the line.
+    const sig = company.signature_image ? pngSize(company.signature_image) : null;
+    if (company.signature_image && sig) {
+      ws.getRow(r + 1).height = 24;
+      ws.getRow(r + 2).height = 24;
+      const { width, height } = fitInside(sig, 190, 60);
+      // Column widths in pixels (Excel's ~7 px per character) to centre the picture in the block.
+      const px = (c: number) => (ws.getColumn(c).width ?? 9) * 7;
+      let blockW = 0;
+      for (let c = signFrom; c <= n; c++) blockW += px(c);
+      let offset = Math.max(0, (blockW - width) / 2);
+      let col = signFrom - 1;
+      while (col < n - 1 && offset >= px(col + 1)) offset -= px(++col);
+      const id = wb.addImage({ base64: company.signature_image, extension: "png" });
+      ws.addImage(id, { tl: { col: col + offset / px(col + 1), row: r + 2 - height / 32 }, ext: { width, height }, editAs: "oneCell" });
+    }
     r += 3;
     const sign = merge(r, signFrom, n);
     sign.value = "Authorised Signatory";

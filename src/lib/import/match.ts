@@ -11,7 +11,6 @@ export type ImportIssue =
   | "missing" // nothing like it in the inventory
   | "similar" // several inventory items fit equally well (e.g. other lengths)
   | "size" // the numbers (size / thickness / length) differ from the inventory item
-  | "code" // the item code in the file differs from the inventory item
   | "fuzzy" // the name is only similar
   | "qty-missing" // no quantity found
   | "qty-unclear"; // the photo was hard to read at the quantity
@@ -370,7 +369,6 @@ type Prepared = {
   dotless: string;
   note: string;
   withNote: string;
-  code: string | null;
   descNums: Set<string>;
   noteNums: Set<string>;
   words: Set<string>;
@@ -400,7 +398,7 @@ function textScore(text: string, target: string) {
  * Can go a little over 1 when the length also agrees, so that it wins over the same name with
  * another length.
  */
-function similarity(name: string, note: string, code: string | null, p: Prepared) {
+function similarity(name: string, note: string, p: Prepared) {
   // Item names always carry a size ("114XSCH40", "4\"X4.5MM TEE"): words without a digit are not items.
   if (!/\d/.test(name)) return 0;
   let s = Math.max(textScore(name, p.desc), textScore(note ? name + note : name, p.withNote));
@@ -409,17 +407,16 @@ function similarity(name: string, note: string, code: string | null, p: Prepared
   if (note && p.note && note === p.note) s += 0.05;
   // A concentric reducer is not an eccentric one, however alike the names.
   if (note && p.note && note !== p.note && /CENTRIC/.test(note + p.note)) s = Math.min(s, 0.85);
-  if (code && p.code) s = p.code === code ? s + 0.08 : Math.min(s, 0.9);
   return s;
 }
 
 /** Best matches for a name, trying the OCR-corrected spelling too. */
-function rank(name: string, note: string, code: string | null, inventory: Prepared[]): Ranked[] {
+function rank(name: string, note: string, inventory: Prepared[]): Ranked[] {
   const variants = [...new Set([name, ocrFixed(name), ocrStripped(name)])];
   const best = new Map<string, Ranked>();
   for (const v of variants) {
     for (const p of inventory) {
-      const score = Math.round(similarity(v, note, code, p) * 1000) / 1000;
+      const score = Math.round(similarity(v, note, p) * 1000) / 1000;
       if (score < 0.45) continue;
       const prev = best.get(p.item.id);
       if (!prev || score > prev.score) best.set(p.item.id, { item: p.item, score, name: v });
@@ -464,7 +461,6 @@ export function matchCandidates(candidates: ImportCandidate[], inventory: Picker
       dotless: desc.replace(/\./g, ""),
       note,
       withNote: desc + note,
-      code: item.item_code ? normalizeName(item.item_code) : null,
       descNums: numbers(desc),
       noteNums: numbers(note),
       words: new Set(wordsOf(`${item.description} ${item.note ?? ""}`)),
@@ -512,7 +508,6 @@ export function matchCandidates(candidates: ImportCandidate[], inventory: Picker
     const first = normalizeName(tokens[0] ?? "");
     const leadingCode = !c.code && tokens.length > 1 && CODE.test(first);
     // Item numbers play no part (the user removed them everywhere); a leading one is only dropped from the name.
-    const code: string | null = null;
     let words = leadingCode ? tokens.slice(1) : tokens;
     // The file's note column: a length is compared with the inventory length, anything else
     // ("B CLASS") is the customer's own note and plays no part in finding the item.
@@ -523,10 +518,10 @@ export function matchCandidates(candidates: ImportCandidate[], inventory: Picker
     let text = c.tableRow ? [c.code, c.name].filter(Boolean).join(" ") || c.text : c.text;
     let qty = c.qty;
     let fileNote = c.note && !isLength(c.note) ? c.note.trim() : order.classNote;
-    let matches = rank(normalizeName(words.join(" ")), note, code, prepared);
+    let matches = rank(normalizeName(words.join(" ")), note, prepared);
     if (!c.tableRow && words.length && /^\d{1,2}[.)]\d/.test(words[0])) {
       const unglued = [words[0].replace(/^\d{1,2}[.)]/, ""), ...words.slice(1)];
-      const m = rank(normalizeName(unglued.join(" ")), note, code, prepared);
+      const m = rank(normalizeName(unglued.join(" ")), note, prepared);
       if ((m[0]?.score ?? 0) > (matches[0]?.score ?? 0)) {
         words = unglued;
         matches = m;
@@ -544,7 +539,7 @@ export function matchCandidates(candidates: ImportCandidate[], inventory: Picker
         for (let len = 1; len <= 5 && i + len <= words.length; len++) {
           const win = words.slice(i, i + len);
           if (win.every((w) => NUMBERISH.test(w))) continue;
-          const m = rank(normalizeName(win.join(" ")), note, code, prepared);
+          const m = rank(normalizeName(win.join(" ")), note, prepared);
           const key = m[0] ? m[0].score + 0.002 * len : 0;
           if (m[0] && (!best || key > best.key)) best = { key, start: i, end: i + len, matches: m };
         }
@@ -574,8 +569,7 @@ export function matchCandidates(candidates: ImportCandidate[], inventory: Picker
         Number(a.weight_kg) === Number(b.weight_kg) &&
         normalizeName(a.actual_weight ?? "") === normalizeName(b.actual_weight ?? "");
       if (tied.every((m) => same(m.item, tied[0].item))) {
-        const pick = tied.find((m) => m.item.item_code) ?? tied[0];
-        keep = [pick, ...keep.filter((m) => !tied.includes(m))];
+        keep = [tied[0], ...keep.filter((m) => !tied.includes(m))];
       } else {
         // "2"XSCH40" and "2"XSCH40 90°" both in the inventory: the name as written wins.
         const says90 = /\b90\s*(°|DEG)/i.test(c.text);
@@ -612,9 +606,8 @@ export function matchCandidates(candidates: ImportCandidate[], inventory: Picker
       // A concentric reducer is not an eccentric one.
       const otherLength = /CENTRIC/.test(note + p.note) && note !== p.note;
       if ((!pipe && !sameSizes(top.name, note, p)) || otherLength) out.push("size");
-      if (code && p.code && p.code !== code) out.push("code");
       const otherThing = lineWords.some((w) => !p.words.has(w));
-      if (((top.score < 0.92 && !pipe) || otherThing) && !out.includes("size") && !out.includes("code")) out.push("fuzzy");
+      if (((top.score < 0.92 && !pipe) || otherThing) && !out.includes("size")) out.push("fuzzy");
       return out;
     };
     let itemIssues = issuesOf(keep, true);
@@ -629,7 +622,7 @@ export function matchCandidates(candidates: ImportCandidate[], inventory: Picker
       const same = [...distance.keys()]
         .sort((a, b) => distance.get(a)! - distance.get(b)!)
         .slice(0, 5)
-        .map((p) => keep.find((m) => m.item.id === p.item.id) ?? { item: p.item, score: Math.round(similarity(lineName, note, code, p) * 1000) / 1000, name: lineName });
+        .map((p) => keep.find((m) => m.item.id === p.item.id) ?? { item: p.item, score: Math.round(similarity(lineName, note, p) * 1000) / 1000, name: lineName });
       // A photo that lost a decimal point ("4"X45MM TEE" for 4"X4.5MM TEE) keeps that item first.
       const pinned = top && keep[0].name.replace(/\./g, "") === top.dotless ? [keep[0]] : [];
       if (same.length) {

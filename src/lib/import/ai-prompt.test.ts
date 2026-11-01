@@ -5,7 +5,6 @@ import { buildCatalog, CHUNK_LINES, itemNps, sizeTable, systemInstruction, textR
 
 const item = (id: string, description: string, note: string | null = null): PickerItem => ({
   id,
-  item_code: null,
   description,
   weight_kg: null,
   unit_price: null,
@@ -76,7 +75,8 @@ describe("textRequests", () => {
 
   it("gives a later part the last block heading above it", () => {
     const rows = (from: number, n: number) => Array.from({ length: n }, (_, i) => `${from + i} 2" B/3 MM`);
-    const lines = ["PURCHASE ORDER 12", "SL ITEM QTY", "MS TEE", ...rows(1, 20), "MS ELBOW", ...rows(21, 40)];
+    // Sized from the part length: the MS ELBOW block starts in part 1 and runs on into part 2.
+    const lines = ["PURCHASE ORDER 12", "SL ITEM QTY", "MS TEE", ...rows(1, CHUNK_LINES - 10), "MS ELBOW", ...rows(CHUNK_LINES, CHUNK_LINES * 2)];
     const requests = textRequests(lines);
     assert.ok(requests.length > 1);
     assert.ok(requests[1].includes("last heading above this part: MS ELBOW"));

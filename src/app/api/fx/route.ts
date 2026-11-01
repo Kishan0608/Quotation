@@ -54,7 +54,7 @@ async function fromFrankfurter(from: string, to: string): Promise<FxRate | null>
 
 /** Latest exchange rate, e.g. /api/fx?from=CNY&to=INR. Live quote first, two daily sources as backup. */
 export async function GET(request: NextRequest) {
-  const auth = await authorize("viewer");
+  const auth = await authorize();
   if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: 401 });
 
   const from = (request.nextUrl.searchParams.get("from") ?? "CNY").toUpperCase();

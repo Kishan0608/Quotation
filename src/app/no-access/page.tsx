@@ -23,9 +23,9 @@ export default async function NoAccessPage({ searchParams }: PageProps<"/no-acce
           </>
         ) : (
           <>
-            <h1 className="mt-4 text-lg font-semibold">Your account is not active</h1>
+            <h1 className="mt-4 text-lg font-semibold">This account cannot use the panel</h1>
             <p className="mt-2 text-sm text-slate-500">
-              Ask an admin to activate your account.
+              Sign out and sign in with the account set up for this panel.
             </p>
           </>
         )}

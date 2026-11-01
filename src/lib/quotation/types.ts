@@ -30,7 +30,8 @@ export type QuoteHeader = {
 };
 
 /** Standard sheet columns, in order. */
-export const STANDARD_COLUMNS = ["idx", "description", "unit_weight_kg", "actual_weight", "unit_price", "qty", "total_weight", "amount", "remarks", "net"] as const;
+// Actual Weight and Note / Length come after Final Total (the user's layout, 2026-10-31).
+export const STANDARD_COLUMNS = ["idx", "description", "unit_weight_kg", "unit_price", "qty", "total_weight", "amount", "net", "actual_weight", "remarks"] as const;
 export type StandardColumn = (typeof STANDARD_COLUMNS)[number];
 
 /** A change to the sheet's columns (extra columns, deleted columns, renamed titles). */
@@ -55,6 +56,13 @@ export type Adjustment = {
 
 export type AdjustmentLine = Adjustment & { amount: number };
 
+/**
+ * Values typed over a calculated cell, like typing over a formula in Excel: they replace the
+ * calculation until the cell is cleared.
+ */
+export type LineOverrides = Partial<Record<"total_weight" | "amount" | "net", number>>;
+export const OVERRIDABLE = ["total_weight", "amount", "net"] as const;
+
 export type QuoteLine = {
   key: string;
   /** Index into header.sheet_names. */
@@ -69,7 +77,7 @@ export type QuoteLine = {
   base_price: number | null;
   unit_price: number | null;
   price_overridden: boolean;
-  /** Shown as "Length" (copied from the inventory Note / Length). */
+  /** Shown as "Note / Length" (copied from the inventory Note / Length; an import adds the customer's note). */
   remarks: string;
   /** As written by the supplier, e.g. "5.4-5.6MM". */
   actual_weight: string;
@@ -77,6 +85,8 @@ export type QuoteLine = {
   extra: Record<string, string>;
   /** Cell formatting (Home ribbon), by column id ("qty", "x:<key>", ...). */
   fmt: Record<string, CellFmt>;
+  /** Total KG / Total Amount / Final Total typed over their calculation (missing = calculated). */
+  overrides?: LineOverrides;
   /**
    * Why this line needs a look, set by Import (e.g. "Not in your inventory"). The row shows red on
    * the sheet until it is edited or marked as checked; it is not saved with the quotation.
@@ -143,6 +153,8 @@ export type CompanyInfo = {
   base_currency: string;
   bank_details: string | null;
   footer_note: string | null;
+  /** PNG data URL of the signature (Company settings), or null. */
+  signature_image: string | null;
 };
 
 /** What the Excel / PDF exporters need. */

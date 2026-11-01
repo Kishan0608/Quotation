@@ -85,6 +85,47 @@ export function resolvePicks(picks: AiLine["items"], catalog: Catalog): PickerIt
 /** The same item under its other lengths / notes. */
 const siblingsOf = (item: PickerItem, catalog: Catalog) => catalog.items.filter((i) => !isCopy(i, item) && normalizeName(i.description) === normalizeName(item.description));
 
+/** Letters and digits only, for comparing names however they are punctuated or spaced. */
+const compact = (s: string) => normalizeName(s).replace(/[^A-Z0-9]/gi, "").toUpperCase();
+
+/**
+ * The AI's first pick means this item: by its inventory number, or by its name written with other
+ * punctuation or spacing ("3" X 2" X SCH40 TEE"). One name inside another doesn't count:
+ * "3"X2"XSCH40 TEE" holds "2"XSCH40 TEE".
+ */
+function agrees(line: AiLine, item: PickerItem, catalog: Catalog) {
+  const p = line.items[0];
+  if (!p) return false;
+  const byNumber = catalog.items[p.n - 1];
+  const own = compact(item.description);
+  return (byNumber != null && isCopy(byNumber, item)) || (own.length > 0 && namesOf(p.name).some((n) => compact(n) === own));
+}
+
+const isStandard = (s: string | null | undefined) => /^\s*standard\s*$/i.test(s ?? "");
+
+/** A difference that says only "190MM long vs Standard" (either way round). */
+function onlyStandardLength(d: string) {
+  if (!/\bstandard\b/i.test(d) || !/\d\s*MM\b/i.test(d)) return false;
+  const rest = d
+    .replace(/\b\d+(\.\d+)?\s*MM\b/i, "")
+    .replace(/\bstandard\b/i, "")
+    .replace(/\b(long|length|vs|versus|the|item|asked|file|is|in|inventory)\b|[.,:;()]/gi, "")
+    .trim();
+  return !rest;
+}
+
+/**
+ * "Standard" is the usual length: an item stocked in one mm length only, never as "Standard", is
+ * the standard one (76X4MM comes as 190MM only). Such a line asks for that item: the length and a
+ * "190MM long vs Standard" difference are dropped, so the item's own length is used.
+ */
+function standardAsOwnLength(line: AiLine, catalog: Catalog): AiLine {
+  const first = line.items[0] ? resolvePick(line.items[0], catalog) : null;
+  if (!first || !isStandard(line.length) || !/^\s*\d+(\.\d+)?\s*MM\s*$/i.test(first.note ?? "")) return line;
+  if (siblingsOf(first, catalog).some((s) => isStandard(s.note))) return line;
+  return { ...line, length: null, differences: line.differences.filter((d) => !onlyStandardLength(d)) };
+}
+
 type Verdict = { status: ImportRow["status"]; issues: ImportIssue[]; matches: ImportMatch[]; why?: string };
 
 const scored = (items: PickerItem[], score: number) => items.map((item) => ({ item, score }));
@@ -114,6 +155,11 @@ function verdictOf(line: AiLine, catalog: Catalog, standard: ImportRow | undefin
   const differences = line.differences.map((d) => d.trim()).filter(Boolean);
 
   if (!picks.length) {
+    // The AI's pick didn't resolve (a name written a little differently, a wrong number), but it
+    // points at the item the standard matcher is sure of and names no difference: the same item.
+    if (standardItem && agrees(line, standardItem, catalog) && !differences.length && !line.several_fit && !conflict(line, standardItem)) {
+      return { status: "matched", issues: [], matches: standard!.matches };
+    }
     // The AI found nothing but the standard matcher is sure: offered, to be checked.
     if (standardItem) return { status: "check", issues: ["fuzzy"], matches: standard!.matches };
     return { status: "none", issues: ["missing"], matches: [] };
@@ -135,7 +181,8 @@ function withSuggestions(matches: ImportMatch[], standard: ImportRow | undefined
 }
 
 /** The AI's lines as import rows, each pick checked against the inventory: the same rows the standard reader gives. */
-export function toImportRows(lines: AiLine[], catalog: Catalog): ImportRow[] {
+export function toImportRows(answer: AiLine[], catalog: Catalog): ImportRow[] {
+  const lines = answer.map((line) => standardAsOwnLength(line, catalog));
   // The standard matcher reads the same item texts, for its suggestions and as a second opinion.
   const standard = matchCandidates(
     lines.map((l) => ({ text: text(l.source, 200) || "-", name: text(l.source, 200) || "-", note: text(l.length, 40) || undefined, qty: 1, tableRow: true })),

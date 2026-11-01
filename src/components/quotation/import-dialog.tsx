@@ -1,18 +1,22 @@
 "use client";
 
-import { AlertTriangle, CheckCircle2, ChevronDown, FileText, FileUp, Loader2, MessageSquareText, Plus, ScanText, Search } from "lucide-react";
-import { useEffect, useMemo, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent } from "react";
+import { AlertTriangle, CheckCircle2, ChevronDown, Download, FileText, FileUp, Loader2, MessageSquareText, Plus, ScanText, Search } from "lucide-react";
+import { Fragment, useEffect, useMemo, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent } from "react";
 import { createPortal } from "react-dom";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Modal } from "@/components/ui/dialog";
+import { useInventoryChanges } from "./use-inventory-changes";
 import { cn } from "@/lib/cn";
-import { fmtMoney, fmtQty, parseNumber, round2 } from "@/lib/format";
+import { fmtMoney, fmtQty, parseNumber, round2, todayISO } from "@/lib/format";
 import type { ImportRow } from "@/lib/import/match";
+import { norm } from "@/lib/inventory/merge";
 import type { PickerItem } from "@/lib/inventory/types";
 
 const ACCEPT = ".xlsx,.csv,.txt,.pdf,.png,.jpg,.jpeg,.webp,.bmp,.gif,.tif,.tiff";
 const MAX_BYTES = 10 * 1024 * 1024;
+/** Files read in one go (each is read on its own, one after another). */
+const MAX_FILES = 10;
 
 /** A line for the sheet, with every field the sheet shows (item null = a new line, not in inventory). */
 export type ImportedLine = {
@@ -23,10 +27,8 @@ export type ImportedLine = {
   weight: number | null;
   actual: string;
   price: number | null;
-  /** The sheet's Length (from the inventory, or a length given in the list). */
+  /** The sheet's Note / Length: the length (from the inventory, or given in the list) and the customer's note ("B CLASS", "galvanised"). */
   length: string;
-  /** The customer's note ("B CLASS", "galvanised"): the sheet's Note column. */
-  note: string;
   check?: string;
 };
 
@@ -47,9 +49,16 @@ type RowState = {
   weight: string;
   actual: string;
   price: string;
+  /** Note / Length, one field. */
   length: string;
-  note: string;
 };
+
+/** Note / Length: the length and the customer's note in one field ("190MM, B CLASS"), each once. */
+const noteLength = (...parts: (string | null | undefined)[]) =>
+  parts
+    .map((p) => p?.trim() ?? "")
+    .filter((p, i, all) => p && all.findIndex((o) => o.toUpperCase() === p.toUpperCase()) === i)
+    .join(", ");
 
 const itemLabel = (i: PickerItem) => [i.description, i.note ? `(${i.note})` : ""].filter(Boolean).join(" ");
 /** The AI reader's reason, added to a red line's message. */
@@ -83,7 +92,11 @@ type Props = {
 export function ImportDialog({ open, onClose, onAdd, priceOf }: Props) {
   const [mode, setMode] = useState<"file" | "text">("file");
   const [pasted, setPasted] = useState("");
-  const [file, setFile] = useState<File | null>(null);
+  /** The files being read / that were read (one or several). */
+  const [files, setFiles] = useState<File[]>([]);
+  const file = files[0] ?? null;
+  /** Which of several files is being read. */
+  const [reading, setReading] = useState<{ i: number; n: number; name: string } | null>(null);
   const [preview, setPreview] = useState<string | null>(null);
   const [busySince, setBusySince] = useState<number | null>(null);
   const [now, setNow] = useState(0);
@@ -113,7 +126,7 @@ export function ImportDialog({ open, onClose, onAdd, priceOf }: Props) {
   }, [busySince]);
 
   const reset = () => {
-    setFile(null);
+    setFiles([]);
     setResult(null);
     setStates([]);
     setOnlyRed(false);
@@ -125,36 +138,58 @@ export function ImportDialog({ open, onClose, onAdd, priceOf }: Props) {
     onClose();
   };
 
-  /** Fields that come from the inventory item (a length given in the list wins). */
+  /** Fields that come from the inventory item (a length given in the list wins; the customer's note follows it). */
   const fill = (row: ImportRow, item: PickerItem | null): Pick<RowState, "weight" | "actual" | "price" | "length"> => {
     const price = item ? (priceOf(item) ?? item.unit_price) : null;
     return {
       weight: item?.weight_kg != null ? String(item.weight_kg) : "",
       actual: item?.actual_weight ?? "",
       price: price != null ? String(price) : "",
-      length: row.length?.trim() || item?.note?.trim() || "",
+      length: noteLength(row.length?.trim() || item?.note, row.note),
     };
   };
 
-  const upload = async (f: File) => {
-    if (f.size > MAX_BYTES) {
-      toast.error("The file is larger than 10 MB.");
-      return;
-    }
+  /** Reads one file or several, one after another; their lines come into one list, in order. */
+  const upload = async (picked: File | File[]) => {
+    const list = (Array.isArray(picked) ? picked : [picked]).slice(0, MAX_FILES);
+    const tooBig = list.filter((f) => f.size > MAX_BYTES);
+    if (tooBig.length) toast.error(`Larger than 10 MB, left out: ${tooBig.map((f) => f.name).join(", ")}`);
+    const ok = list.filter((f) => f.size <= MAX_BYTES);
+    if (!ok.length) return;
+    if ((Array.isArray(picked) ? picked.length : 1) > MAX_FILES) toast.info(`Only the first ${MAX_FILES} files are read.`);
     reset();
-    setFile(f);
+    setFiles(ok);
     const started = Date.now();
     setNow(started);
     setBusySince(started);
+    const read: Result = { ocr: false, ai: false, rows: [], text: "", note: null };
+    const failed: string[] = [];
     try {
-      const form = new FormData();
-      form.append("file", f);
-      const res = await fetch("/api/import/items", { method: "POST", body: form });
-      const json = (await res.json().catch(() => ({}))) as Partial<Result> & { error?: string };
-      if (!res.ok || !json.rows) throw new Error(json.error ?? "Could not read this file.");
-      setResult({ ocr: Boolean(json.ocr), ai: Boolean(json.ai), rows: json.rows, text: json.text ?? "", note: json.note ?? null });
+      for (const [i, f] of ok.entries()) {
+        setReading({ i: i + 1, n: ok.length, name: f.name });
+        try {
+          const form = new FormData();
+          form.append("file", f);
+          const res = await fetch("/api/import/items", { method: "POST", body: form });
+          const json = (await res.json().catch(() => ({}))) as Partial<Result> & { error?: string };
+          if (!res.ok || !json.rows) throw new Error(json.error ?? "Could not read this file.");
+          read.ocr ||= Boolean(json.ocr);
+          read.ai ||= Boolean(json.ai);
+          read.rows.push(...json.rows);
+          read.text += `${ok.length > 1 ? `--- ${f.name} ---\n` : ""}${json.text ?? ""}\n`;
+          if (json.note) read.note = [read.note, ok.length > 1 ? `${f.name}: ${json.note}` : json.note].filter(Boolean).join(" ");
+        } catch (e) {
+          failed.push(`${f.name}: ${(e as Error).message}`);
+        }
+      }
+      if (failed.length) toast.error(failed.join(" · "));
+      if (failed.length === ok.length) {
+        setFiles([]);
+        return;
+      }
+      setResult(read);
       setStates(
-        json.rows.map((r) => {
+        read.rows.map((r) => {
           // Another size is another item: such a line comes in under its own name (as a new
           // line), with the closest items still offered in the item box.
           const item = r.issues.includes("size") || r.issues.includes("missing") ? null : (r.matches[0]?.item ?? null);
@@ -163,19 +198,17 @@ export function ImportDialog({ open, onClose, onAdd, priceOf }: Props) {
             choice: item?.id ?? "new",
             extra: null,
             itemOk: r.status === "matched",
-            qtyOk: !r.issues.some((i) => i.startsWith("qty")),
+            // No quantity in the document: 1 piece. A quantity that was hard to read stays red.
+            qtyOk: !r.issues.includes("qty-unclear"),
             name: r.text,
-            qty: r.qty != null ? String(r.qty) : "",
-            note: r.note ?? "",
+            qty: String(r.qty ?? 1),
             ...fill(r, item),
           };
         }),
       );
-      if (!json.rows.length) toast.info("No items were found.");
-    } catch (e) {
-      toast.error((e as Error).message);
-      setFile(null);
+      if (!read.rows.length) toast.info("No items were found.");
     } finally {
+      setReading(null);
       setBusySince(null);
     }
   };
@@ -188,21 +221,65 @@ export function ImportDialog({ open, onClose, onAdd, priceOf }: Props) {
   const onDrop = (e: DragEvent) => {
     e.preventDefault();
     setDragging(false);
-    const f = e.dataTransfer.files?.[0];
-    if (f) void upload(f);
+    const dropped = Array.from(e.dataTransfer.files ?? []);
+    if (dropped.length) void upload(dropped);
   };
   /** A screenshot pasted with Ctrl+V is read like an uploaded picture. */
   const onPaste = (e: ClipboardEvent) => {
     if (mode !== "file" || busy || result) return;
-    const f = e.clipboardData.files?.[0];
-    if (f) {
+    const pastedFiles = Array.from(e.clipboardData.files ?? []);
+    if (pastedFiles.length) {
       e.preventDefault();
-      void upload(new File([f], f.name || "Pasted picture.png", { type: f.type }));
+      void upload(pastedFiles.map((f, i) => new File([f], f.name || `Pasted picture ${i + 1}.png`, { type: f.type })));
     }
   };
 
   const setRow = (i: number, patch: Partial<RowState>) => setStates((ss) => ss.map((s, k) => (k === i ? { ...s, ...patch } : s)));
   const itemOf = (row: ImportRow, s: RowState): PickerItem | null => (s.choice === "new" ? null : (row.matches.find((m) => m.item.id === s.choice)?.item ?? s.extra));
+
+  // ---- Live inventory: a change made while this review is open (a price edited, an item added,
+  // here or on another PC) reaches its rows. A weight, actual weight or price typed here stays.
+  const review = useRef({ result, states });
+  useEffect(() => {
+    review.current = { result, states };
+  });
+  useInventoryChanges(open && result != null, (items) => {
+    const { result: r, states: ss } = review.current;
+    if (!r) return;
+    const fresh = new Map(items.map((i) => [i.id, i]));
+    const rows = r.rows.map((row) => (row.matches.some((m) => fresh.has(m.item.id)) ? { ...row, matches: row.matches.map((m) => ({ ...m, item: fresh.get(m.item.id) ?? m.item })) } : row));
+    let updated = 0;
+    let linked = 0;
+    const next = ss.map((s, i) => {
+      const row = r.rows[i];
+      const was = itemOf(row, s);
+      const now = was ? fresh.get(was.id) : undefined;
+      if (was && now) {
+        const before = fill(row, was);
+        const after = fill(row, now);
+        const patch: Partial<RowState> = s.extra?.id === now.id ? { extra: now } : {};
+        for (const k of ["weight", "actual", "price"] as const) if (s[k] === before[k] && after[k] !== before[k]) patch[k] = after[k];
+        if (patch.weight != null || patch.actual != null || patch.price != null) updated++;
+        return Object.keys(patch).length ? { ...s, ...patch } : s;
+      }
+      // A new line whose name was just added to the inventory: linked to it.
+      if (s.choice === "new") {
+        const hit = items.find((it) => norm(it.description) === norm(s.name));
+        if (hit) {
+          linked++;
+          return { ...s, choice: hit.id, extra: hit, itemOk: true, ...fill(row, hit) };
+        }
+      }
+      return s;
+    });
+    review.current = { result: { ...r, rows }, states: next };
+    setResult({ ...r, rows });
+    setStates(next);
+    if (updated || linked) {
+      const parts = [updated ? `${updated} line${updated === 1 ? "" : "s"} re-priced` : "", linked ? `${linked} new line${linked === 1 ? "" : "s"} now found in inventory` : ""].filter(Boolean);
+      toast.success(`Inventory changed: ${parts.join(", ")}.`);
+    }
+  });
 
   const view = useMemo(() => {
     if (!result) return null;
@@ -235,6 +312,22 @@ export function ImportDialog({ open, onClose, onAdd, priceOf }: Props) {
     ? { total: view.length, ready: view.filter((v) => v.s.include && !v.red).length, red: view.filter((v) => v.red).length, skipped: view.filter((v) => !v.s.include).length }
     : null;
   const toAdd = view?.filter((v) => v.s.include) ?? [];
+
+  /** The lines not in the inventory, as an Excel for the supplier's prices (the filled-in file imports into Inventory). */
+  const newOnes = toAdd.filter((v) => v.s.choice === "new");
+  const downloadNew = async () => {
+    try {
+      const [{ buildNewItemsWorkbook, mergeNewItems }, { downloadBlob }] = await Promise.all([import("@/lib/quotation/export-new-items"), import("@/lib/quotation/export-columns")]);
+      const items = mergeNewItems(newOnes.map(({ s }) => ({ description: s.name.trim() || "Item", qty: parseNumber(s.qty) ?? 0, length: s.length })));
+      const source = files.length > 1 ? `${files.length} files` : (file?.name ?? "list").replace(/\.[^.]+$/, "");
+      const buffer = await buildNewItemsWorkbook(items, `NEW ITEMS — ${source} — ${todayISO()}`);
+      const safe = source.replace(/[^\w-]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 40) || "list";
+      downloadBlob(new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }), `New_items_${safe}_${todayISO()}.xlsx`);
+      toast.success(`${items.length} new item${items.length === 1 ? "" : "s"} downloaded. Send it to the supplier; import the filled-in file in Inventory.`);
+    } catch {
+      toast.error("Could not make the Excel file.");
+    }
+  };
   const sumQty = toAdd.reduce((s, v) => s + v.qty, 0);
   const sumTotal = round2(toAdd.reduce((s, v) => s + v.total, 0));
 
@@ -249,7 +342,6 @@ export function ImportDialog({ open, onClose, onAdd, priceOf }: Props) {
         actual: s.actual.trim(),
         price: parseNumber(s.price),
         length: s.length.trim(),
-        note: s.note.trim(),
         check: problems.length ? problems.join(" ") : undefined,
       })),
     );
@@ -279,9 +371,11 @@ export function ImportDialog({ open, onClose, onAdd, priceOf }: Props) {
               Final total <span className="num font-semibold text-slate-800">RMB {fmtMoney(sumTotal)}</span>
               {counts!.red ? <span className="ml-2 text-red-600">· red lines come onto the sheet in red, to finish checking there</span> : null}
             </p>
-            <Button variant="outline" onClick={reset}>
-              Start again
-            </Button>
+            {newOnes.length ? (
+              <Button variant="outline" onClick={downloadNew} title="Excel of the lines not in your inventory, to get prices from the supplier">
+                <Download /> Download new items
+              </Button>
+            ) : null}
             <Button variant="excel" onClick={add} disabled={!toAdd.length}>
               <Plus /> Add {toAdd.length} line{toAdd.length === 1 ? "" : "s"} to the sheet
             </Button>
@@ -329,23 +423,24 @@ export function ImportDialog({ open, onClose, onAdd, priceOf }: Props) {
             >
               {busy ? <Loader2 className="size-10 animate-spin text-brand-600" /> : <FileUp className="size-10 text-slate-400" />}
               <div>
-                <p className="text-sm font-semibold text-slate-800">{busy ? `Reading ${file?.name ?? "the file"}` : "Drop a file here, click to choose, or paste a screenshot (Ctrl+V)"}</p>
-                <p className="mt-1 text-xs text-slate-500">{busy ? `${stage} ${seconds ? `(${seconds}s)` : ""}` : "Excel, CSV, PDF or a photo · up to 10 MB"}</p>
+                <p className="text-sm font-semibold text-slate-800">{busy ? (reading && reading.n > 1 ? `Reading file ${reading.i} of ${reading.n}: ${reading.name}` : `Reading ${file?.name ?? "the file"}`) : "Drop files here, click to choose, or paste a screenshot (Ctrl+V)"}</p>
+                <p className="mt-1 text-xs text-slate-500">{busy ? `${stage} ${seconds ? `(${seconds}s)` : ""}` : "Excel, CSV, PDF or photos · one or several files · up to 10 MB each"}</p>
               </div>
               <input
                 type="file"
                 accept={ACCEPT}
+                multiple
                 className="sr-only"
                 disabled={busy}
                 onChange={(e) => {
-                  const f = e.target.files?.[0];
+                  const chosen = Array.from(e.target.files ?? []);
                   e.target.value = "";
-                  if (f) void upload(f);
+                  if (chosen.length) void upload(chosen);
                 }}
               />
               {!busy ? (
                 <span className="inline-flex items-center gap-1.5 rounded-lg bg-brand-600 px-3 py-1.5 text-xs font-semibold text-white">
-                  <FileUp className="size-3.5" /> Choose file
+                  <FileUp className="size-3.5" /> Choose files
                 </span>
               ) : null}
             </label>
@@ -365,7 +460,7 @@ export function ImportDialog({ open, onClose, onAdd, priceOf }: Props) {
                 className="w-full resize-y rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm leading-relaxed outline-none placeholder:text-slate-400 focus:border-brand-500 focus:ring-2 focus:ring-brand-100 disabled:bg-slate-50"
               />
               <div className="flex flex-wrap items-center justify-between gap-2">
-                <p className="text-xs text-slate-500">{busy ? `${stage} ${seconds ? `(${seconds}s)` : ""}` : "Words after an item (galvanised, B CLASS, urgent…) go to its Note."}</p>
+                <p className="text-xs text-slate-500">{busy ? `${stage} ${seconds ? `(${seconds}s)` : ""}` : "Words after an item (galvanised, B CLASS, urgent…) go to its Note / Length."}</p>
                 <Button variant="excel" onClick={readPasted} disabled={!pasted.trim() || busy} loading={busy}>
                   <ScanText /> Read the list
                 </Button>
@@ -388,7 +483,9 @@ export function ImportDialog({ open, onClose, onAdd, priceOf }: Props) {
               </span>
             )}
             <div className="min-w-0">
-              <p className="truncate text-sm font-semibold text-slate-800">{file?.name}</p>
+              <p className="truncate text-sm font-semibold text-slate-800" title={files.map((f) => f.name).join("\n")}>
+                {files.length > 1 ? `${files.length} files: ${files.map((f) => f.name).join(", ")}` : file?.name}
+              </p>
               <p className="text-xs text-slate-500">
                 {counts!.total} line{counts!.total === 1 ? "" : "s"} found{result.ai ? " · read with AI" : result.ocr ? " · read with OCR" : ""}
               </p>
@@ -425,8 +522,7 @@ export function ImportDialog({ open, onClose, onAdd, priceOf }: Props) {
                     <th className="w-28 px-1.5 py-2">Actual weight</th>
                     <th className="w-24 px-1.5 py-2 text-right">RMB/PCS</th>
                     <th className="w-20 px-1.5 py-2 text-right">QTY</th>
-                    <th className="w-28 px-1.5 py-2">Length</th>
-                    <th className="w-36 px-1.5 py-2">Note</th>
+                    <th className="w-44 px-1.5 py-2">Note / Length</th>
                     <th className="w-28 px-3 py-2 text-right">Final total</th>
                   </tr>
                 </thead>
@@ -450,8 +546,18 @@ export function ImportDialog({ open, onClose, onAdd, priceOf }: Props) {
                           <td className="max-w-[15rem] px-2 py-2">
                             <div className="flex items-start gap-1.5 pt-1.5">
                               {off ? null : red ? <AlertTriangle className="mt-0.5 size-4 shrink-0 text-red-600" /> : <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-excel-700" />}
-                              <span className={cn("break-words", off ? "line-through" : "font-medium text-slate-800")} title={row.text}>
-                                {row.text}
+                              {/* Spec lists run words together with commas ("TEE,UNEQ,BW,CS..."): the name may wrap after each comma, and anywhere as a last resort, so it never spills under the item box. */}
+                              <span className={cn("min-w-0 [overflow-wrap:anywhere]", off ? "line-through" : "font-medium text-slate-800")} title={row.text}>
+                                {row.text.split(",").map((part, k) => (
+                                  <Fragment key={k}>
+                                    {k ? (
+                                      <>
+                                        ,<wbr />
+                                      </>
+                                    ) : null}
+                                    {part}
+                                  </Fragment>
+                                ))}
                               </span>
                             </div>
                             {/* A concentric / eccentric reducer says so here, so two lines of the same size can be told apart. */}
@@ -511,10 +617,7 @@ export function ImportDialog({ open, onClose, onAdd, priceOf }: Props) {
                             />
                           </td>
                           <td className="px-1.5 py-2">
-                            <input aria-label="Length" value={s.length} disabled={off} onChange={(e) => setRow(i, { length: e.target.value })} className={cell} />
-                          </td>
-                          <td className="px-1.5 py-2">
-                            <input aria-label="Note" value={s.note} placeholder="—" disabled={off} onChange={(e) => setRow(i, { note: e.target.value })} className={cell} />
+                            <input aria-label="Note / Length" value={s.length} placeholder="—" disabled={off} onChange={(e) => setRow(i, { length: e.target.value })} className={cell} />
                           </td>
                           <td className={cn("num px-3 py-2 pt-3.5 text-right font-semibold", off ? "text-slate-400" : "text-slate-800")}>{fmtMoney(total)}</td>
                         </tr>
@@ -527,14 +630,6 @@ export function ImportDialog({ open, onClose, onAdd, priceOf }: Props) {
             <p className="rounded-lg bg-slate-50 px-3 py-8 text-center text-sm text-slate-500">No items were found. Try a clearer photo, or paste the list as text.</p>
           )}
 
-          {result.text.trim() ? (
-            <details className="rounded-lg border border-slate-200 text-xs">
-              <summary className="flex cursor-pointer items-center gap-1.5 px-3 py-2 font-medium text-slate-600 select-none hover:bg-slate-50">
-                <ScanText className="size-3.5" /> Text that was read
-              </summary>
-              <pre className="scroll-thin max-h-56 overflow-auto border-t border-slate-100 px-3 py-2 font-mono text-[11px] leading-relaxed whitespace-pre-wrap text-slate-600">{result.text}</pre>
-            </details>
-          ) : null}
         </div>
       )}
     </Modal>
@@ -575,23 +670,27 @@ function ItemChooser({
   // Search the whole inventory as the user types.
   useEffect(() => {
     if (!open || !q.trim()) return;
-    const ctl = new AbortController();
+    // A newer keystroke makes this search stale: its answer is ignored (an aborted fetch would
+    // reject, which the dev tools report as an unhandled error).
+    let stale = false;
     const t = setTimeout(async () => {
       setSearching(true);
       try {
-        const res = await fetch(`/api/inventory/search?${new URLSearchParams({ q: q.trim(), limit: "8" })}`, { signal: ctl.signal, cache: "no-store" });
-        const json = (await res.json()) as { items?: PickerItem[] };
-        setResults(json.items ?? []);
-        setActive(0);
+        const res = await fetch(`/api/inventory/search?${new URLSearchParams({ q: q.trim(), limit: "8" })}`, { cache: "no-store" });
+        const json = (await res.json().catch(() => ({}))) as { items?: PickerItem[] };
+        if (!stale && res.ok) {
+          setResults(json.items ?? []);
+          setActive(0);
+        }
       } catch {
-        // aborted or offline: keep the last results
+        // offline: keep the last results
       } finally {
-        if (!ctl.signal.aborted) setSearching(false);
+        if (!stale) setSearching(false);
       }
     }, 200);
     return () => {
+      stale = true;
       clearTimeout(t);
-      ctl.abort();
     };
   }, [q, open]);
 
@@ -674,10 +773,8 @@ function ItemChooser({
             <Plus className="size-3.5 shrink-0" /> New line (not in inventory)
           </span>
         ) : current ? (
-          <span className="flex min-w-0 items-center gap-1.5">
-            <span className="truncate font-medium text-slate-800">{current.description}</span>
-            {current.note ? <span className="truncate text-slate-500">{current.note}</span> : null}
-          </span>
+          // The item's name only: its note (length / reducer type) goes in the Note / Length column.
+          <span className="truncate font-medium text-slate-800">{current.description}</span>
         ) : (
           <span className="text-slate-400">Choose an item…</span>
         )}

@@ -1,6 +1,6 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { addDaysISO, todayISO } from "@/lib/format";
+import { todayISO } from "@/lib/format";
 import type { CompanyInfo, QuoteHeader } from "@/lib/quotation/types";
 import type { CompanySettingsRow, Database } from "@/lib/supabase/database.types";
 import { getCompanySettings } from "./quotations";
@@ -25,6 +25,7 @@ const FALLBACK_COMPANY: CompanySettingsRow = {
   default_terms: null,
   bank_details: null,
   footer_note: null,
+  signature_image: null,
   updated_at: "",
 };
 
@@ -43,6 +44,8 @@ export async function loadBuilderContext(supabase: SupabaseClient<Database>) {
     base_currency: s.base_currency,
     bank_details: s.bank_details,
     footer_note: s.footer_note,
+    // Missing until the signature column is added to the database.
+    signature_image: s.signature_image ?? null,
   };
   return { settings: s, company };
 }
@@ -52,16 +55,18 @@ export function defaultHeader(s: CompanySettingsRow): QuoteHeader {
   return {
     status: "draft",
     quote_date: today,
-    valid_until: addDaysISO(today, s.default_validity_days),
+    valid_until: "",
     reference: "",
     customer_name: "",
     contact_person: "",
     customer_email: "",
     customer_phone: "",
     customer_address: "",
-    currency: s.default_currency,
-    exchange_rate: s.default_currency === s.base_currency ? 1 : Number(s.default_exchange_rate),
-    margin_pct: Number(s.default_margin_pct),
+    // In RMB until a conversion is added on the Totals card (RMB -> INR / USD).
+    currency: s.base_currency,
+    exchange_rate: 1,
+    // The commission % (customer price = China price / (1 - commission)).
+    margin_pct: Math.min(Math.max(Number(s.default_margin_pct) || 0, 0), 95),
     pricing_basis: "piece",
     rate_per_kg: null,
     // The company's default tax (Company settings) is added as the first bill line.

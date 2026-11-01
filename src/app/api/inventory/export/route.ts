@@ -6,7 +6,7 @@ import { todayISO } from "@/lib/format";
 
 /** Streams the (filtered) inventory as .xlsx. Generated on the fly, never stored. */
 export async function GET(request: NextRequest) {
-  const auth = await authorize("viewer");
+  const auth = await authorize();
   if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: 401 });
 
   const q = (request.nextUrl.searchParams.get("q") ?? "").trim().slice(0, 100);
@@ -46,13 +46,16 @@ export async function GET(request: NextRequest) {
   });
   head.height = 22;
 
+  // Totals are worked out here (the table keeps only weight, price and quantity); Excel recalculates them.
+  const kg = (r: (typeof rows)[number]) => Number(r.weight_kg ?? 0) * Number(r.stock_qty ?? 0);
+  const amount = (r: (typeof rows)[number]) => Number(r.unit_price ?? 0) * Number(r.stock_qty ?? 0);
   rows.forEach((r, idx) => {
     const n = idx + 3;
     const row = ws.getRow(n);
     row.values = [
       r.description, r.weight_kg, r.unit_price, r.stock_qty,
-      { formula: `B${n}*D${n}`, result: Number(r.total_weight_kg) }, // TOTAL KG = WT x QTY
-      { formula: `C${n}*D${n}`, result: Number(r.total_amount) }, // AMOUNT = PRICE x QTY
+      { formula: `B${n}*D${n}`, result: kg(r) }, // TOTAL KG = WT x QTY
+      { formula: `C${n}*D${n}`, result: amount(r) }, // AMOUNT = PRICE x QTY
       r.actual_weight,
       r.note,
     ];
@@ -68,8 +71,8 @@ export async function GET(request: NextRequest) {
   totals.getCell(1).value = "TOTAL";
   if (rows.length) {
     totals.getCell(4).value = { formula: `SUM(D3:D${last})`, result: rows.reduce((s, r) => s + Number(r.stock_qty), 0) };
-    totals.getCell(5).value = { formula: `SUM(E3:E${last})`, result: rows.reduce((s, r) => s + Number(r.total_weight_kg), 0) };
-    totals.getCell(6).value = { formula: `SUM(F3:F${last})`, result: rows.reduce((s, r) => s + Number(r.total_amount), 0) };
+    totals.getCell(5).value = { formula: `SUM(E3:E${last})`, result: rows.reduce((s, r) => s + kg(r), 0) };
+    totals.getCell(6).value = { formula: `SUM(F3:F${last})`, result: rows.reduce((s, r) => s + amount(r), 0) };
   }
   totals.font = { bold: true };
   totals.getCell(5).numFmt = "#,##0.000";

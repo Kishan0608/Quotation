@@ -1,12 +1,12 @@
 import type { Metadata } from "next";
-import { ArrowRight, Boxes, Building2, CheckCircle2, Circle, FilePlus2, FileText, FileUp, Ruler, Scale, Wallet } from "lucide-react";
+import { ArrowRight, Boxes, Building2, FilePlus2, FileText, FileUp, Ruler, Scale, Wallet } from "lucide-react";
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { ButtonLink } from "@/components/ui/button";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
+import { LiveRefresh } from "@/components/live-refresh";
 import { PageHeader } from "@/components/ui/page-header";
 import { requireUser } from "@/lib/auth/dal";
-import { hasRole } from "@/lib/auth/roles";
 import { cn } from "@/lib/cn";
 import { fmtDate, fmtMoney, fmtQty, fmtWeight } from "@/lib/format";
 import type { DashboardSummary } from "@/lib/supabase/database.types";
@@ -51,61 +51,26 @@ export default async function DashboardPage() {
   const summary = (summaryRes.data as DashboardSummary | null) ?? EMPTY;
   const recent = recentRes.data ?? [];
   const base = companyRes.data?.base_currency ?? "CNY";
-  const canEdit = hasRole(user.role, "editor");
-
-  const setup = [
-    { done: Boolean(companyRes.data && companyRes.data.company_name !== "Your Company Name"), label: "Add your company details", href: "/settings", admin: true },
-    { done: summary.inventory.items > 0, label: "Import or add your inventory", href: "/inventory" },
-    { done: summary.quotations.total > 0, label: "Create your first quotation", href: "/quotations/new" },
-  ].filter((s) => !s.admin || user.role === "admin");
-  const showSetup = setup.some((s) => !s.done);
 
   const hour = new Date().getHours();
   const greeting = hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
 
   return (
     <>
+      <LiveRefresh tables={["inventory", "quotations"]} />
       <PageHeader
         title={`${greeting}${user.fullName ? `, ${user.fullName.split(" ")[0]}` : ""}`}
         actions={
-          canEdit ? (
-            <>
-              <ButtonLink href="/inventory" variant="outline">
-                <Boxes /> Inventory
-              </ButtonLink>
-              <ButtonLink href="/quotations/new">
-                <FilePlus2 /> New quotation
-              </ButtonLink>
-            </>
-          ) : null
+          <>
+            <ButtonLink href="/inventory" variant="outline">
+              <Boxes /> Inventory
+            </ButtonLink>
+            <ButtonLink href="/quotations/new">
+              <FilePlus2 /> New quotation
+            </ButtonLink>
+          </>
         }
       />
-
-      {showSetup ? (
-        <Card className="mb-6 overflow-hidden border-brand-200">
-          <div className="flex flex-col gap-4 bg-gradient-to-r from-brand-50 to-white p-5 md:flex-row md:items-center">
-            <div className="md:w-64">
-              <h2 className="text-sm font-semibold text-brand-950">Getting started</h2>
-            </div>
-            <ol className="grid flex-1 gap-2 sm:grid-cols-3">
-              {setup.map((s) => (
-                <li key={s.label}>
-                  <Link
-                    href={s.href}
-                    className={cn(
-                      "flex items-center gap-2.5 rounded-lg border bg-white px-3 py-2.5 text-sm transition-colors",
-                      s.done ? "border-emerald-200 text-emerald-800" : "border-slate-200 hover:border-brand-300 hover:text-brand-800",
-                    )}
-                  >
-                    {s.done ? <CheckCircle2 className="size-4 text-emerald-600" /> : <Circle className="size-4 text-slate-300" />}
-                    <span className={cn(s.done && "line-through decoration-emerald-300")}>{s.label}</span>
-                  </Link>
-                </li>
-              ))}
-            </ol>
-          </div>
-        </Card>
-      ) : null}
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <Stat icon={<Boxes />} label="Inventory items" value={fmtQty(summary.inventory.items)} hint={`${fmtQty(summary.inventory.total_qty)} pcs in stock${summary.inventory.low_stock ? ` · ${summary.inventory.low_stock} out of stock` : ""}`} />
@@ -164,13 +129,11 @@ export default async function DashboardPage() {
             <CardHeader title="Shortcuts" />
             <CardBody className="grid grid-cols-2 gap-2">
               {[
-                { href: "/quotations/new", icon: FilePlus2, label: "New quotation", show: canEdit },
-                { href: "/inventory", icon: FileUp, label: "Import Excel", show: canEdit },
-                { href: "/sizes", icon: Ruler, label: "Size chart", show: true },
-                { href: "/settings", icon: Building2, label: "Company", show: user.role === "admin" },
-              ]
-                .filter((s) => s.show)
-                .map(({ href, icon: Icon, label }) => (
+                { href: "/quotations/new", icon: FilePlus2, label: "New quotation" },
+                { href: "/inventory", icon: FileUp, label: "Import Excel" },
+                { href: "/sizes", icon: Ruler, label: "Size chart" },
+                { href: "/settings", icon: Building2, label: "Company" },
+              ].map(({ href, icon: Icon, label }) => (
                   <Link key={href} href={href} className="flex items-center gap-2.5 rounded-lg border border-slate-200 px-3 py-2.5 text-sm font-medium text-slate-700 hover:border-brand-300 hover:bg-brand-50/50 hover:text-brand-800">
                     <Icon className="size-4 text-brand-600" /> {label}
                   </Link>
