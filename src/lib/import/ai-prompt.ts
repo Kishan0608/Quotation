@@ -52,6 +52,7 @@ HOW THE INVENTORY WRITES ITEMS
 Each inventory line is: n|NPS|item name|note. n is the inventory number. NPS is the nominal pipe size of the item, worked out for you ("-" when not known). The note holds the item's length ("300MM", "560MM", "Standard"), the reducer type (CONCENTRIC / ECCENTRIC) or a material (Q235).
 - The size comes first: outside diameter x wall in mm ("114X3.5MM" = OD 114 mm with a 3.5 mm wall, NPS 4"), or inches with a schedule or a wall ("4"XSCH40", "21/2"X4MM", "12"XSTD"). 11/2" means 1 1/2", 21/2" means 2 1/2".
 - An item name with no kind word is a 90 degree long-radius elbow: "2"XSCH40" = 2" SCH40 90° LR elbow; "114X3.5MM" = 4" elbow with a 3.5 mm wall.
+- The same holds for the customer: a line that gives only a size ("88 X 4MM", "8" X SCH40", "4" X 4.5MM") asks for a 90 degree long-radius elbow, never a straight pipe. Only a line that says PIPE is a pipe; one that says BEND (or BEDN, LONG BEND) with 3D or 5D is that bend.
 - Other kinds say so: TEE (equal "2"XSCH40 TEE", reducing "4"X2"XSCH40 TEE"), CAP, REDUCER ("4"X2"XSCH40 REDUCER", "4"XSCH40X2"XSCH80 REDUCER"; CONCENTRIC / ECCENTRIC is its note), 45° (45 degree elbow), 180° (return / U bend), 1D (short-radius elbow), 3D BEND, 5D BEND, FLANGE (SORF slip-on raised face, SOFF slip-on flat face, BLRF blind raised face, BLFF blind flat face, WNRF weld neck raised face; CL150 = class 150).
 - A wall in mm and a schedule are the same when the wall in the size table agrees; an OD in mm and an inch size are the same NPS when the size table says so (73 or 76 mm = 2 1/2", 88 or 89 = 3", 165 or 168 = 6").
 
@@ -66,17 +67,18 @@ HOW CUSTOMERS WRITE THE SAME THINGS
 
 WHAT TO RETURN
 One entry in "lines" for every item asked for, in the document's order. Skip headings, letterheads, addresses, totals, prices, terms and signatures. An item written over several lines is one item; a line naming two items is two items. A heading over a block ("MS ELBOW", "REDUCER CONCENTRIC") says what the lines under it are.
-- source: the item as written in the document, without the quantity (at most 200 characters). If only a heading above it says what kind it is, add that in brackets: "2" B/3 MM (MS ELBOW)".
+- source: the item as written in the document, without the quantity (at most 200 characters). Keep every size, wall and thickness exactly as written ("1’’ B/2.5 MM", "4" SCH40", "114 X 3.5MM") - never move them to the note. If only a heading above it says what kind it is, add that in brackets: "2" B/3 MM (MS ELBOW)".
 - qty: how many pieces are asked for (QTY, NOS, PCS, pieces, sets; "QTY-2pcs" = 2). Never a price, amount, weight, size, length or row number. null when not given.
 - qty_sure: false when the quantity is unclear (hard to read, could be another column, or given in metres, kg or tons instead of pieces).
 - length: a length the document writes for the item ("300MM", "6 MTR", "Standard"), or for a reducer CONCENTRIC / ECCENTRIC; else null. Never fill one in that the document doesn't write (no "Standard" by default). STD, XS and SCH are walls, never a length.
 - note: what else the customer asks for that is not in the inventory item's name: material and grade, standard, ends, coating, marking ("ASTM A182 F316L, ASME B16.5", "galvanised", "B CLASS"); else null. Don't repeat the size, wall, schedule, kind, angle, class or facing.
 In a table, read the columns by their headings: the item cell (and its code), QTY for qty, LENGTH or NOTE for the length or note. Prices, weights and amounts are not quantities.
 - size_inch: the main (largest) size of the item in inches NPS, e.g. "4", "1 1/2", "20"; null without a size.
+- line: when you are given numbered lines ("12: ..."), the number of the line this entry is for; otherwise null.
 - reason: one short sentence, why the inventory items fit or don't.
 - items: the inventory items that are this item or come closest (same kind and size first), best first, at most 6: n = the inventory number, name = the item name exactly as the inventory writes it (the name only: not n, NPS or note). Empty when the inventory has nothing of this kind in this size.
 - several_fit: true when two or more of the items fit equally well and the document doesn't say which (for example the same elbow in two lengths); else false.
-- differences: every way the first item differs from what the customer asks for, each in a few words ("SCH80 vs SCH40", "class 300 vs 1500", "concentric vs eccentric", "1450MM long vs 1280MM", "stainless asked, item is carbon steel"). Compare the kind, every size, the wall or schedule, angle and radius, flange type, facing and class, reducer type, the length when both give one, and the material: stainless steel or an alloy asked means the item must state that same material; when both state a material they must agree; carbon steel (CS, MS, A234 WPB, A105, A106) fits an item that states no material. Wording, ends (BW), standards (ASME B16.9, ASTM A234 WPB) and the customer's notes are not differences. Empty when the first item is this very item.
+- differences: every way the first item differs from what the customer asks for, each in a few words ("SCH80 vs SCH40", "class 300 vs 1500", "concentric vs eccentric", "1450MM long vs 1280MM", "stainless asked, item is carbon steel"). Compare the kind, every size, the wall or schedule, angle and radius, flange type, facing and class, reducer type, the length when both give one, and the material: stainless steel or an alloy asked means the item must state that same material; when both state a material they must agree; carbon steel (CS, MS, A234 WPB, A105, A106) fits an item that states no material. Wording, ends (BW), standards (ASME B16.9, ASTM A234 WPB) and the customer's notes are not differences. Empty when the first item is this very item. Never list: a class letter (B CLASS, C CLASS) - it is a note; XS vs SCH80 up to 8", or STD vs SCH40 up to 10" - they are the same wall; a schedule or wall the customer did not write.
 Compare every number: 355X5MM is not 355X5.5MM, 4"XSCH40 is not 4"XSCH80. Never make up inventory numbers.`;
 
 /** Everything the AI is told before the document: the rules, the size table and the whole inventory. */
@@ -90,6 +92,22 @@ export const CHUNK_LINES = 60;
 
 /** A line that heads a block ("MS ELBOW", "REDUCER CONCENTRIC"): words only, no size. */
 const isHeading = (l: string) => !/\d/.test(l) && /[a-z]{3}/i.test(l) && l.split(/\s+/).length <= 6;
+
+/**
+ * Lines the standard reader already read from a text document but could not match for sure, one
+ * item each ("12: 1’’ B/2.5 MM (MS ELBOW) | note: B CLASS"): the AI only matches them to the
+ * inventory. Their text and quantity are kept as read, so the checks always see what the
+ * customer wrote.
+ */
+export function resolveRequests(lines: string[]): string[] {
+  const intro =
+    "These lines were already read from a customer's document - one item each, as \"number: the item as written | length | note\". " +
+    "Return exactly one entry per line, in the same order: line = its number, source = its text as given, qty = null, qty_sure = true, " +
+    "and length / note as given; then match the item to the inventory as usual (items, several_fit, differences, reason, size_inch).";
+  const parts: string[] = [];
+  for (let i = 0; i < lines.length; i += CHUNK_LINES) parts.push(`${intro}\n\n${lines.slice(i, i + CHUNK_LINES).join("\n")}`);
+  return parts;
+}
 
 /**
  * What the AI is asked for a document read as text: one request, or one per part of a long list.
@@ -113,7 +131,7 @@ export function textRequests(lines: string[]): string[] {
   });
 }
 
-const nullable = (type: "string" | "number") => ({ type: [type, "null"] });
+const nullable = (type: "string" | "number" | "integer") => ({ type: [type, "null"] });
 
 /**
  * The JSON the AI must answer with. There is no one-word verdict (the model mislabelled lines it
@@ -133,6 +151,7 @@ export const AI_RESPONSE_SCHEMA = {
           length: nullable("string"),
           note: nullable("string"),
           size_inch: nullable("string"),
+          line: nullable("integer"),
           reason: { type: "string" },
           items: {
             type: "array",
@@ -145,7 +164,7 @@ export const AI_RESPONSE_SCHEMA = {
           several_fit: { type: "boolean" },
           differences: { type: "array", items: { type: "string" } },
         },
-        required: ["source", "qty", "qty_sure", "length", "note", "size_inch", "reason", "items", "several_fit", "differences"],
+        required: ["source", "qty", "qty_sure", "length", "note", "size_inch", "line", "reason", "items", "several_fit", "differences"],
       },
     },
   },

@@ -3,6 +3,7 @@ import { LiveRefresh } from "@/components/live-refresh";
 import { PageHeader } from "@/components/ui/page-header";
 import { dbErrorMessage } from "@/lib/data/errors";
 import { listInventory } from "@/lib/data/inventory";
+import { pageOrLast } from "@/lib/data/paging";
 import { parseInventoryFilters } from "@/lib/inventory/filters";
 import { createClient } from "@/lib/supabase/server";
 import { InventoryView } from "./inventory-view";
@@ -10,10 +11,9 @@ import { InventoryView } from "./inventory-view";
 export const metadata: Metadata = { title: "Inventory" };
 
 export default async function InventoryPage({ searchParams }: PageProps<"/inventory">) {
-  const filters = parseInventoryFilters(await searchParams);
   const supabase = await createClient();
-  const [list, company] = await Promise.all([
-    listInventory(supabase, filters),
+  const [{ filters, list }, company] = await Promise.all([
+    pageOrLast(parseInventoryFilters(await searchParams), (f) => listInventory(supabase, f)),
     supabase.from("company_settings").select("base_currency").maybeSingle(),
   ]);
 

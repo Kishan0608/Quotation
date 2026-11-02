@@ -19,7 +19,7 @@ export function columnLetter(n: number) {
   return s;
 }
 
-export function sheetTop(ws: Worksheet, rows = TOP_ROWS, cols = TOP_COLS): string[][] {
+function sheetTop(ws: Worksheet, rows = TOP_ROWS, cols = TOP_COLS): string[][] {
   const out: string[][] = [];
   for (let r = 1; r <= Math.min(ws.rowCount, rows); r++) {
     const row = ws.getRow(r);

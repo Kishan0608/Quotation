@@ -1,25 +1,30 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { blankLine } from "@/components/quotation/line-utils";
+import { MAX_COMMISSION } from "@/lib/quotation/calc";
 import { STANDARD_COLUMNS, type QuoteHeader, type QuoteLine, type StandardColumn } from "@/lib/quotation/types";
 import type { CompanySettingsRow, Database, QuotationItemRow, QuotationRow, QuotationStatus } from "@/lib/supabase/database.types";
 
 type Client = SupabaseClient<Database>;
 
-export const STATUSES: QuotationStatus[] = ["draft", "sent", "accepted", "rejected", "expired"];
+const STATUSES: QuotationStatus[] = ["draft", "sent", "accepted", "rejected", "expired"];
 
 export type QuotationFilters = { q: string; status: QuotationStatus | ""; page: number; pageSize: number };
 
 const first = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v) ?? "";
 
+/** Rows per page on the Quotations list (the Pagination component's choices). */
+const PAGE_SIZES = [25, 50, 100, 200];
+
 export function parseQuotationFilters(params: Record<string, string | string[] | undefined>): QuotationFilters {
   const status = first(params.status) as QuotationStatus;
   const page = Number(first(params.page));
+  const pageSize = Number(first(params.size));
   return {
     q: first(params.q).trim().slice(0, 100),
     status: STATUSES.includes(status) ? status : "",
     page: Number.isInteger(page) && page > 0 ? Math.min(page, 10_000) : 1,
-    pageSize: 25,
+    pageSize: PAGE_SIZES.includes(pageSize) ? pageSize : 25,
   };
 }
 
@@ -42,7 +47,7 @@ export async function listQuotations(supabase: Client, f: QuotationFilters) {
 
 export type QuotationListRow = Awaited<ReturnType<typeof listQuotations>>["rows"][number];
 
-export type LoadedQuotation = {
+type LoadedQuotation = {
   id: string;
   quoteNo: string;
   preparedBy: string | null;
@@ -51,7 +56,7 @@ export type LoadedQuotation = {
   lines: QuoteLine[];
 };
 
-export function toHeader(q: QuotationRow): QuoteHeader {
+function toHeader(q: QuotationRow): QuoteHeader {
   return {
     status: q.status,
     quote_date: q.quote_date,
@@ -64,7 +69,7 @@ export function toHeader(q: QuotationRow): QuoteHeader {
     customer_address: q.customer_address ?? "",
     currency: q.currency,
     exchange_rate: Number(q.exchange_rate),
-    margin_pct: Math.min(Math.max(Number(q.margin_pct) || 0, 0), 95),
+    margin_pct: Math.min(Math.max(Number(q.margin_pct) || 0, 0), MAX_COMMISSION),
     pricing_basis: q.pricing_basis,
     rate_per_kg: q.rate_per_kg == null ? null : Number(q.rate_per_kg),
     adjustments: (Array.isArray(q.adjustments) ? q.adjustments : []).map((a, i) => ({
@@ -88,7 +93,7 @@ export function toHeader(q: QuotationRow): QuoteHeader {
   };
 }
 
-export function toLine(i: QuotationItemRow): QuoteLine {
+function toLine(i: QuotationItemRow): QuoteLine {
   return {
     key: i.id,
     sheet: Number(i.sheet ?? 0),

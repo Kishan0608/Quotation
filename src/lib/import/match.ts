@@ -68,7 +68,7 @@ const UNICODE_FRACTIONS: Record<string, string> = { "½": "1/2", "¼": "1/4", "�
  * An order line written the way people type it, in the inventory's form: 1.1/2’’ -> 1 1/2",
  * ½ -> 1/2, SL/40 -> SCH40, B/2.5 MM -> X 2.5MM (with "B CLASS" as the note).
  */
-function orderText(s: string): { text: string; classNote: string; centric: string } {
+export function orderText(s: string): { text: string; classNote: string; centric: string } {
   let classNote = "";
   let centric = "";
   let text = s
@@ -268,7 +268,7 @@ function dice(a: string, b: string) {
  * The nominal pipe size (inches) of an outside diameter in mm, from the pipe chart. Suppliers and
  * customers write the same size differently (2 1/2": 73 or 76, 3": 88 or 89, 6": 165 or 168).
  */
-function nominalSize(od: number) {
+export function nominalSize(od: number) {
   const row = PIPE_CHART.find(([, , , chartOd]) => Math.abs(od - chartOd) <= Math.max(3.5, chartOd * 0.045));
   return row ? row[1] : null;
 }
@@ -284,13 +284,17 @@ type PipeSize = {
   wall: number | null;
   /** Where the wall comes from: written in mm, or a schedule. */
   family: "mm" | "sch" | null;
+  /** The schedule as written ("40", "STD", "XS"), when the wall is one. */
+  code?: string;
   /** What comes after the size: TEE, 45", a second size... */
   rest: string;
 };
 
 /** Schedules written after an inch size, longest first ("SCH100" is not "SCH10"). */
 const SCHEDULE = /^X?SCH(100|120|140|160|5S|10S|40S|80S|10|20|30|40|60|80|STD|XXS|XS)|^X(STD|XXS|XS)/;
-const LATER_SCHEDULE = /SCH(100|120|140|160|5S|10S|40S|80S|10|20|30|40|60|80|XXS|XS)/;
+// Also STD / XS right after a second size: '14"X12"XSTD REDUCER' (X then STD, like 8"XSTD; so
+// '12"XXS' is X + XS, and double extra strong is written '12"XXXS').
+const LATER_SCHEDULE = /SCH(100|120|140|160|5S|10S|40S|80S|10|20|30|40|60|80|XXS|XS)|(?<=")X?(STD|XXS|XS)(?!CH)/;
 
 /**
  * The pipe size a normalised name starts with: an outside diameter and wall ("76X3MM") or inches
@@ -310,6 +314,7 @@ export function pipeSize(n: string): PipeSize | null {
   let rest = n.slice(inch[0].length);
   let wall: number | null = null;
   let family: PipeSize["family"] = null;
+  let code: string | undefined;
   const mmWall = rest.match(/^X(\d+(?:\.\d+)?)(?:\/\d+(?:\.\d+)?)?MM/);
   // The schedule, also after other words ("3" X OIL PIPE SCH40", "14"X12"XSCH40 REDUCER").
   const schedule = mmWall ? null : (rest.match(SCHEDULE) ?? rest.match(LATER_SCHEDULE));
@@ -318,12 +323,13 @@ export function pipeSize(n: string): PipeSize | null {
     family = "mm";
     rest = rest.slice(mmWall[0].length);
   } else if (schedule) {
-    const i = SCHEDULES.findIndex((s) => s.code === (schedule[1] ?? schedule[2]));
+    code = schedule[1] ?? schedule[2];
+    const i = SCHEDULES.findIndex((s) => s.code === code);
     wall = row && i >= 0 ? row[4][i] : null;
     family = "sch";
     rest = rest.slice(0, schedule.index) + rest.slice((schedule.index ?? 0) + schedule[0].length);
   }
-  return { key: `${nps}"`, form: "inch", od: row ? row[3] : null, wall, family, rest };
+  return { key: `${nps}"`, form: "inch", od: row ? row[3] : null, wall, family, rest, ...(code ? { code } : {}) };
 }
 
 /**
@@ -446,8 +452,9 @@ function sizeDistance(line: PipeSize, lineKind: Set<string>, p: Prepared) {
   // The wall counts most; 73 or 76 for 2 1/2" is only a way of writing it, and so is mm or inches.
   d += line.wall != null && s.wall != null ? Math.abs(line.wall - s.wall) : 3;
   if (line.od != null && s.od != null) d += Math.abs(line.od - s.od) * 0.1;
-  // A wall written in mm is closest to walls written in mm (1" X 2.5MM: 33X2.5MM before 1"XSCH40).
-  return d + (line.family === s.family ? 0 : 0.5);
+  // A wall written in mm is closest to walls written in mm (1" X 2.5MM: 33X2.5MM before 1"XSCH40),
+  // and of two names for one wall the one written like the line comes first (SCH40 before STD).
+  return d + (line.family === s.family ? 0 : 0.5) + (line.code && s.code && line.code !== s.code ? 0.05 : 0);
 }
 
 /** Finds the inventory items that best match each line of the uploaded list. */

@@ -5,6 +5,7 @@ import { LiveRefresh } from "@/components/live-refresh";
 import { PageHeader } from "@/components/ui/page-header";
 import { requireUser } from "@/lib/auth/dal";
 import { dbErrorMessage } from "@/lib/data/errors";
+import { pageOrLast } from "@/lib/data/paging";
 import { listQuotations, parseQuotationFilters } from "@/lib/data/quotations";
 import { createClient } from "@/lib/supabase/server";
 import { QuotationsList } from "./quotations-list";
@@ -13,9 +14,9 @@ export const metadata: Metadata = { title: "Quotations" };
 
 export default async function QuotationsPage({ searchParams }: PageProps<"/quotations">) {
   await requireUser();
-  const filters = parseQuotationFilters(await searchParams);
   const supabase = await createClient();
-  const { rows, total, error } = await listQuotations(supabase, filters);
+  const { filters, list } = await pageOrLast(parseQuotationFilters(await searchParams), (f) => listQuotations(supabase, f));
+  const { rows, total, error } = list;
 
   return (
     <>

@@ -17,7 +17,7 @@ export type ImportResult = {
 
 /** The fields an inventory sheet's columns can hold. */
 export type InventoryField = "description" | "weight_kg" | "unit_price" | "stock_qty" | "actual_weight" | "note";
-export const INVENTORY_FIELDS: { field: InventoryField; label: string }[] = [
+const INVENTORY_FIELDS: { field: InventoryField; label: string }[] = [
   { field: "description", label: "Items" },
   { field: "weight_kg", label: "WT in kgs" },
   { field: "unit_price", label: "RMB/PCS" },

@@ -43,7 +43,7 @@ export function sheetColLetter(n: number) {
   return s;
 }
 
-export type SheetSlot = { kind: "std"; id: StandardColumn } | { kind: "extra"; col: ExtraColumn; index: number };
+type SheetSlot = { kind: "std"; id: StandardColumn } | { kind: "extra"; col: ExtraColumn; index: number };
 
 /**
  * Column order of the sheet (and the downloads): the standard columns minus deleted ones,
@@ -98,7 +98,8 @@ export function exportColumns(doc: Pick<QuoteDocument, "company" | "header">): E
   );
   cols.push({ key: "total_weight", header: "Total KG", kind: "totalWeight", width: 12, pdfWidth: 16, align: "right" });
   cols.push({ key: "amount", header: "Total Amount", kind: "amount", width: 14, pdfWidth: 19, align: "right" });
-  cols.push({ key: "remarks", header: "Note / Length", kind: "text", width: 16, pdfWidth: 18, align: "left", value: (l) => l.remarks || null });
+  // Wide enough in the PDF for "CONCENTRIC, CS," on one line (narrower splits the word and makes rows tall).
+  cols.push({ key: "remarks", header: "Note / Length", kind: "text", width: 16, pdfWidth: 24, align: "left", value: (l) => l.remarks || null });
   cols.push({ key: "net", header: "Final Total", kind: "net", width: 15, pdfWidth: 19, align: "right" });
   const byKey = new Map(cols.map((c) => [c.key === "index" ? "idx" : c.key, c]));
   const shown: ExportColumn[] = [];
@@ -120,7 +121,7 @@ export function exportColumns(doc: Pick<QuoteDocument, "company" | "header">): E
  * quotation it is and when it was made ("KAMALA_FITTINGS_INDIA_2026-10-31.pdf"). Without a
  * customer, the quotation number.
  */
-export function quoteFileName(quoteNo: string, customer: string, date: string, ext: "xlsx" | "pdf") {
+export function quoteFileName(quoteNo: string, customer: string, date: string, ext: "xlsx" | "pdf", tag = "") {
   const safe = (s: string) =>
     s
       .normalize("NFKD")
@@ -128,7 +129,7 @@ export function quoteFileName(quoteNo: string, customer: string, date: string, e
       .trim()
       .replace(/\s+/g, "_")
       .slice(0, 60);
-  const parts = [safe(customer) || safe(quoteNo) || "Quotation", /^\d{4}-\d{2}-\d{2}$/.test(date) ? date : ""].filter(Boolean);
+  const parts = [safe(customer) || safe(quoteNo) || "Quotation", /^\d{4}-\d{2}-\d{2}$/.test(date) ? date : "", tag].filter(Boolean);
   return `${parts.join("_")}.${ext}`;
 }
 

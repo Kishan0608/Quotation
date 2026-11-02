@@ -1,7 +1,7 @@
 import type { PickerItem } from "@/lib/inventory/types";
 import { parseNpsValue } from "@/lib/pipe/sizes";
 import { itemNps } from "./ai-prompt";
-import { normalizeName, pipeSize } from "./match";
+import { normalizeName, orderText, pipeSize } from "./match";
 
 /** What a line asks for, as the AI read it. */
 export type Asked = { source: string; length: string | null; size_inch: string | null };
@@ -12,8 +12,11 @@ const KINDS: [string, RegExp][] = [
   ["CAP", /\bCAPS?\b/],
   ["FLANGE", /FLANGE|\bFLG\b|WELD\s*NECK|SLIP\s*-?\s*ON|\bBLIND\b|\b(SORF|SOFF|BLRF|BLFF|WNRF|WN|SO|BL)\b/],
   ["REDUCER", /\bRED(UCER|UCING|U)?\b|CONCENTRIC|ECCENTRIC|\bCONC?\b|\bECC\b|\bSWAGE/],
-  ["180° BEND", /\b180\s*(°|DEG|D\b)|\b180\s*(ELB|BEND)|\bU\s*-?\s*BEND|RETURN\s*BEND/],
-  ["45° ELBOW", /\b45\s*(°|DEG|D\b)|\b45\s*(ELB|BEND)|ELBOW\s*45\b/],
+  // "3" X OIL PIPE SCH40" is a pipe, not an elbow.
+  ["PIPE", /\bPIPES?\b/],
+  // Spec lists write the angle after the kind with commas: "ELBO,45,LR", "ELBOW,180,SR".
+  ["180° BEND", /\b180\s*(°|DEG|D\b)|\b180\s*(ELB|BEND)|\bU\s*-?\s*BEND|RETURN\s*BEND|\bELBOW?\W{0,3}180\b|\b180\W{0,3}(LR|SR)\b/],
+  ["45° ELBOW", /\b45\s*(°|DEG|D\b)|\b45\s*(ELB|BEND)|\bELBOW?\W{0,3}45\b|\b45\W{0,3}(LR|SR)\b/],
   ["1D ELBOW", /\b1\s*D\b|\bSR\b|SHORT\s*RAD/],
 ];
 const ELBOW = /ELBOW|\bELBO\b|\bELL\b|\b90\s*(°|DEG)|\bLR\b/;
@@ -21,9 +24,11 @@ const ELBOW = /ELBOW|\bELBO\b|\bELL\b|\b90\s*(°|DEG)|\bLR\b/;
 /** The kind of fitting a text names (null = it doesn't say). An inventory name with a size and no kind word is a 90° elbow. */
 export function kindOf(text: string, isItem: boolean): string | null {
   const t = text.toUpperCase();
-  const bend = t.match(/\b([2-9])\s*D\b(?=.*BEND)|\b([2-9])\s*D\s*BEND/);
+  // "3D BEND", "BEND 3D", and the way purchase orders write it: "MS LONG BEDN 3D".
+  const bendWord = /\bBE(ND|DN)S?\b/.test(t);
+  const bend = bendWord ? t.match(/\b([2-9])\s*D\b/) : null;
   for (const [kind, re] of KINDS) if (re.test(t)) return kind;
-  if (bend) return `${bend[1] ?? bend[2]}D BEND`;
+  if (bend) return `${bend[1]}D BEND`;
   if (ELBOW.test(t)) return "ELBOW";
   return isItem && pipeSize(normalizeName(text)) ? "ELBOW" : null;
 }
@@ -42,12 +47,21 @@ function flangeOf(text: string) {
 
 const STAINLESS = /STAINLESS|\bSS\b|\bSS\s*\d{3}|\b[FP]?3(04|16|21|47)L?H?\b|\bTP\s*3\d\d|\bA182\s*F3|\bA312\b|\bA403\b|DUPLEX/;
 
-const centricOf = (t: string) => (/\bE?CC?ENTRIC\b|\bECC\b/.test(t.toUpperCase()) ? "ECCENTRIC" : /\bCONC?(ENTRIC)?\b/.test(t.toUpperCase()) ? "CONCENTRIC" : null);
+export const centricOf = (t: string) => (/\bE?CC?ENTRIC\b|\bECC\b/.test(t.toUpperCase()) ? "ECCENTRIC" : /\bCONC?(ENTRIC)?\b/.test(t.toUpperCase()) ? "CONCENTRIC" : null);
 
 const mmLength = (t: string | null) => t?.trim().match(/^(\d+(?:\.\d+)?)\s*MM$/i)?.[1] ?? null;
 
-/** The size a line starts with, after a row number or bullet ("1. 114X3.5MM", "- 4" SCH40"). */
-const sizeOfLine = (source: string) => pipeSize(normalizeName(source.replace(/^\s*(\(?\d{1,3}[.)]|[-•*#])\s+/, "")));
+/**
+ * The size a line starts with, after a row number or bullet ("1. 114X3.5MM", "- 4" SCH40"), read
+ * the customer's way too: 2’’ = 2", SL/40 = SCH40, "1’’ B/2.5 MM" = 1" with a 2.5 mm wall.
+ */
+const sizeOfLine = (source: string) => pipeSize(normalizeName(orderText(source.replace(/^\s*(\(?\d{1,3}[.)]|[-•*#])\s+/, "")).text));
+
+/** The line says nothing but a size, wall, schedule and class ("88 X 4MM", "2" X SCH80", "1’’ B/2.5 MM"). */
+function onlyASize(source: string) {
+  const words = orderText(source).text.toUpperCase().match(/[A-Z]{2,}/g) ?? [];
+  return words.every((w) => /^(X|MM|SCH\d*|STD|XX?S|CLASS|NB|INCH|IN)$/.test(w));
+}
 
 /**
  * Why an inventory item is not what a line asks for, from what both say outright: the nominal size,
@@ -67,8 +81,19 @@ export function conflict(asked: Asked, item: PickerItem): string | null {
   if (lineSize?.wall != null && itemSize?.wall != null && lineSize.family === itemSize.family && Math.abs(lineSize.wall - itemSize.wall) > 0.001) {
     return `the wall differs (${lineSize.wall} mm in the file, ${itemSize.wall} mm in the item)`;
   }
+  // A wall in mm against a schedule's wall: the same within 0.1 mm (1 1/4" C/3.5 MM and SCH40's
+  // 3.56 mm), another wall beyond (1" B/2.5 MM is not 1" SCH40's 3.38 mm).
+  if (lineSize?.wall != null && itemSize?.wall != null && lineSize.family !== itemSize.family && Math.abs(lineSize.wall - itemSize.wall) > 0.1) {
+    return `the wall differs (${lineSize.wall} mm in the file, ${itemSize.wall} mm in the item)`;
+  }
+  // Both written as outside diameter x wall: another OD is another item (88 is not 89, 324 not 325).
+  if (lineSize?.form === "mm" && itemSize?.form === "mm" && lineSize.od != null && itemSize.od != null && Math.abs(lineSize.od - itemSize.od) >= 0.5) {
+    return `the OD differs (${lineSize.od} mm in the file, ${itemSize.od} mm in the item)`;
+  }
 
-  const kindWanted = kindOf(asked.source, false);
+  // A line that is only a size is a 90° elbow, like an inventory name ("88 X 4MM", "4" X 4.5MM").
+  // Words the rules don't know ("MS LONG BEDN 3D") leave the kind to the AI.
+  const kindWanted = kindOf(asked.source, false) ?? (lineSize && onlyASize(asked.source) ? "ELBOW" : null);
   const kindHas = kindOf(name, true);
   if (kindWanted && kindHas && kindWanted !== kindHas) return `the file asks for a ${kindWanted}, the item is a ${kindHas}`;
 

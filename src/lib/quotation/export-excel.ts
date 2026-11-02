@@ -1,4 +1,4 @@
-import type { Alignment, Borders, Cell, Fill, Font, Worksheet } from "exceljs";
+import type { Alignment, Borders, Cell, Fill, Font, Workbook, Worksheet } from "exceljs";
 import { amountInWords } from "./currency";
 import { fitInside, pngSize } from "./signature";
 import { exportColumns, exportMerges, sheetColumnId, type ExportColumn } from "./export-columns";
@@ -85,9 +85,8 @@ function estimateLines(text: string, widthChars: number) {
     );
 }
 
-/** Excel sheet names: max 31 characters, none of : \\ / ? * [ ], unique (case-insensitive). */
-function excelSheetNames(names: string[]) {
-  const used = new Set<string>();
+/** Excel sheet names: max 31 characters, none of : \\ / ? * [ ], unique (case-insensitive) with the names in `used`. */
+function excelSheetNames(names: string[], used = new Set<string>()) {
   return names.map((raw, i) => {
     const base = (
       raw.replace(/[:\\/?*[\]]/g, " ").trim() || `Sheet ${i + 1}`
@@ -102,11 +101,12 @@ function excelSheetNames(names: string[]) {
 
 /**
  * Builds a styled .xlsx (live formulas for weights, amounts and totals), one worksheet
- * per quotation sheet. The last worksheet carries the quotation summary, whose final
- * total adds up the TOTAL row of every sheet.
+ * per quotation sheet. With `china` (china-document.ts), its sheet comes first, as on
+ * the screen.
  */
 export async function buildQuotationWorkbook(
   doc: QuoteDocument,
+  china?: QuoteDocument,
 ): Promise<ArrayBuffer> {
   // CJS in Node, UMD bundle in the browser: the namespace may or may not sit under `default`.
   const mod =
@@ -115,6 +115,22 @@ export async function buildQuotationWorkbook(
     };
   const ExcelJS = mod.default ?? mod;
 
+  const wb = new ExcelJS.Workbook();
+  wb.creator = doc.company.company_name;
+  wb.created = new Date();
+  wb.calcProperties.fullCalcOnLoad = true;
+
+  const used = new Set<string>(); // sheet names taken in the workbook
+  if (china) addQuotationSheets(wb, china, used);
+  addQuotationSheets(wb, doc, used);
+  return (await wb.xlsx.writeBuffer()) as ArrayBuffer;
+}
+
+/**
+ * The worksheets of one version of the quotation. The last one carries its summary,
+ * whose final total adds up the TOTAL row of every sheet of that version.
+ */
+function addQuotationSheets(wb: Workbook, doc: QuoteDocument, used: Set<string>) {
   const { header, company, totals } = doc;
   const cols = exportColumns(doc);
   const n = cols.length;
@@ -123,13 +139,9 @@ export async function buildQuotationWorkbook(
   const widthOf = (from: number, to: number) =>
     cols.slice(from - 1, to).reduce((s, c) => s + c.width, 0);
 
-  const wb = new ExcelJS.Workbook();
-  wb.creator = company.company_name;
-  wb.created = new Date();
-  wb.calcProperties.fullCalcOnLoad = true;
-
   const sheetNames = excelSheetNames(
     header.sheet_names?.length ? header.sheet_names : ["Quotation"],
+    used,
   );
   const netRefs: { ref: string; result: number }[] = []; // each sheet's Final Total (TOTAL row)
 
@@ -214,7 +226,7 @@ export async function buildQuotationWorkbook(
     r++;
 
     const band = merge(r, 1, n);
-    band.value = "QUOTATION";
+    band.value = doc.china ? "CHINA PRICE" : "QUOTATION";
     style(
       band,
       { size: 14, bold: true, color: { argb: "FFFFFFFF" } },
@@ -391,6 +403,10 @@ export async function buildQuotationWorkbook(
       const cell = ws.getCell(r, i + 1);
       const letter = colLetter(i + 1);
       if (i + 1 === descIdx) cell.value = "TOTAL";
+      if (c.key === "unit_price") {
+        cell.value = { formula: sum(letter), result: sheetTotals.totalPrice };
+        cell.numFmt = "#,##0.00";
+      }
       if (c.key === "qty") {
         cell.value = { formula: sum(letter), result: sheetTotals.totalQty };
         cell.numFmt = Number.isInteger(sheetTotals.totalQty)
@@ -631,6 +647,4 @@ export async function buildQuotationWorkbook(
     ws.pageSetup.printArea = `A1:${last}${r}`;
     ws.pageSetup.printTitlesRow = `${headerRow}:${headerRow}`;
   }
-
-  return (await wb.xlsx.writeBuffer()) as ArrayBuffer;
 }

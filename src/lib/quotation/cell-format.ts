@@ -14,7 +14,7 @@ export type BorderPreset = "bottom" | "top" | "left" | "right" | "none" | "all" 
 export type MergeMode = "center" | "across" | "cells" | "unmerge";
 
 /** Drops unset/default values; returns undefined when nothing is left. */
-export function cleanFmt(f: CellFmt | undefined): CellFmt | undefined {
+function cleanFmt(f: CellFmt | undefined): CellFmt | undefined {
   if (!f) return undefined;
   const out: CellFmt = {};
   for (const [k, v] of Object.entries(f) as [keyof CellFmt, CellFmt[keyof CellFmt]][]) {

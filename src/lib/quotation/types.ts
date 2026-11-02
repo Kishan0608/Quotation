@@ -61,7 +61,6 @@ export type AdjustmentLine = Adjustment & { amount: number };
  * calculation until the cell is cleared.
  */
 export type LineOverrides = Partial<Record<"total_weight" | "amount" | "net", number>>;
-export const OVERRIDABLE = ["total_weight", "amount", "net"] as const;
 
 export type QuoteLine = {
   key: string;
@@ -125,6 +124,8 @@ export type CellFmt = {
 export type QuoteTotals = {
   totalQty: number;
   totalWeight: number;
+  /** Sum of the RMB/PCS column (Excel's SUM of the price per piece). */
+  totalPrice: number;
   /** Sum of Total Amount (qty x price). */
   grossAmount: number;
   /** Sum of the lines' Final Total (= Total Amount), in RMB. */
@@ -165,4 +166,6 @@ export type QuoteDocument = {
   lines: QuoteLine[];
   totals: QuoteTotals;
   company: CompanyInfo;
+  /** The China price version (china-document.ts), titled as such in the files. */
+  china?: boolean;
 };

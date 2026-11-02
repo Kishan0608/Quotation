@@ -1,4 +1,4 @@
-import { round2, round3 } from "../format";
+import { round2, round3, roundTo } from "../format";
 import type { Adjustment, AdjustmentKind, QuoteHeader, QuoteLine, QuoteTotals } from "./types";
 
 type PricingInputs = Pick<QuoteHeader, "pricing_basis" | "rate_per_kg" | "margin_pct">;
@@ -6,12 +6,15 @@ type PricingInputs = Pick<QuoteHeader, "pricing_basis" | "rate_per_kg" | "margin
 /** "RMB" for CNY (as written on the supplier sheets), otherwise the ISO code. */
 export const currencyLabel = (code: string) => (code === "CNY" ? "RMB" : code);
 
+/** The highest commission % a quotation takes. */
+export const MAX_COMMISSION = 500;
+
 /**
  * Automatic customer price for one line, in RMB (the company base currency):
  *   base  = China (inventory) price per piece      (pricing basis "piece")
  *         = unit weight (kg) x rate per kg         (pricing basis "kg")
- *   price = base / (1 - commission %), rounded to 2 decimals: the commission is part of the
- *           customer price (0.80 with 20% -> 1.00). header.margin_pct holds the commission.
+ *   price = base x (1 + commission %), rounded to 2 decimals: the commission is added on top
+ *           of the China price (5.70 with 10% -> 6.27). header.margin_pct holds the commission.
  * Lines stay in RMB; the total is converted to the quotation currency at the end.
  */
 export function autoUnitPrice(line: Pick<QuoteLine, "base_price" | "unit_weight_kg">, pricing: PricingInputs) {
@@ -22,9 +25,16 @@ export function autoUnitPrice(line: Pick<QuoteLine, "base_price" | "unit_weight_
     base = line.base_price;
   }
   if (base == null) return null;
-  const commission = Math.min(Math.max(pricing.margin_pct || 0, 0), 95) / 100;
-  return round2(base / (1 - commission));
+  const commission = Math.min(Math.max(pricing.margin_pct || 0, 0), MAX_COMMISSION) / 100;
+  return round2(base * (1 + commission));
 }
+
+/**
+ * The commission typed as a multiplier: China price x 1.25 is the same as + 25% (header.margin_pct
+ * keeps the %, to 2 decimals as the database does, so a multiplier keeps 4).
+ */
+export const commissionOfMultiplier = (multiplier: number) => roundTo((multiplier - 1) * 100, 2);
+export const multiplierOf = (commission: number) => roundTo(1 + commission / 100, 4);
 
 /** Re-prices every line that the user has not overridden by hand. */
 export function repriceLines(lines: QuoteLine[], pricing: PricingInputs, force = false): QuoteLine[] {
@@ -56,11 +66,13 @@ const KIND_ORDER: Record<AdjustmentKind, number> = { discount: 0, charge: 1, tax
 export function computeTotals(lines: QuoteLine[], header: Pick<QuoteHeader, "adjustments" | "exchange_rate">): QuoteTotals {
   let totalQty = 0;
   let totalWeight = 0;
+  let totalPrice = 0;
   let grossAmount = 0;
   let subtotal = 0;
   for (const line of lines) {
     totalQty += line.qty ?? 0;
     totalWeight += lineWeight(line);
+    totalPrice += line.unit_price ?? 0;
     grossAmount += lineAmount(line);
     subtotal += lineNet(line);
   }
@@ -82,6 +94,7 @@ export function computeTotals(lines: QuoteLine[], header: Pick<QuoteHeader, "adj
   return {
     totalQty: round2(totalQty),
     totalWeight: round3(totalWeight),
+    totalPrice: round2(totalPrice),
     grossAmount,
     baseSubtotal,
     exchangeRate,

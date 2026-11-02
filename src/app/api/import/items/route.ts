@@ -44,7 +44,7 @@ export async function POST(request: NextRequest) {
   // The AI reader first; when it isn't set up or fails, the standard reader below reads the file.
   const ai = await readWithAi(buf, kind, file.type, inventory);
   if (ai) {
-    return NextResponse.json({ kind, ocr: false, ai: true, rows: ai.rows, text: ai.text.slice(0, 20_000), note: ai.note ?? null }, { headers: NO_STORE });
+    return NextResponse.json({ kind, ocr: false, ai: ai.ai, rows: ai.rows, text: ai.text.slice(0, 20_000), note: ai.note ?? null }, { headers: NO_STORE });
   }
 
   let extracted: Extracted;

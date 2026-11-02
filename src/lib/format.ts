@@ -42,19 +42,12 @@ export function fmtDateTime(iso: string | null | undefined) {
   return `${fmtDate(toISODate(date))}, ${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
 }
 
-export function toISODate(date: Date) {
+function toISODate(date: Date) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 }
 
 export function todayISO() {
   return toISODate(new Date());
-}
-
-export function addDaysISO(iso: string, days: number) {
-  const [y, m, d] = iso.split("-").map(Number);
-  const date = new Date(y, m - 1, d);
-  date.setDate(date.getDate() + days);
-  return toISODate(date);
 }
 
 /** Lenient number parsing for form and grid input: "1,250.5" -> 1250.5, "" -> null. */

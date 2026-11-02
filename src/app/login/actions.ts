@@ -3,6 +3,7 @@
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { z } from "zod";
+import { lockedMinutes, recordFailure, recordSuccess } from "@/lib/auth/login-limit";
 import { safeNext } from "@/lib/auth/safe-redirect";
 import { createClient } from "@/lib/supabase/server";
 
@@ -22,9 +23,14 @@ export async function signIn(_prev: AuthFormState, formData: FormData): Promise<
   });
   if (!parsed.success) return { error: "Enter a valid email address and password." };
 
+  const ip = await clientIp();
+  const locked = lockedMinutes(parsed.data.email, ip);
+  if (locked) return { error: `Too many wrong passwords. Try again in ${locked} minute${locked === 1 ? "" : "s"}.`, email: parsed.data.email };
+
   const supabase = await createClient();
   const { error } = await supabase.auth.signInWithPassword({ email: parsed.data.email, password: parsed.data.password });
   if (error) {
+    if (error.status !== 429) recordFailure(parsed.data.email, ip);
     // One generic message so the form does not reveal which accounts exist.
     const message =
       error.status === 429
@@ -35,7 +41,14 @@ export async function signIn(_prev: AuthFormState, formData: FormData): Promise<
     return { error: message, email: parsed.data.email };
   }
 
+  recordSuccess(parsed.data.email);
   redirect(safeNext(parsed.data.next));
+}
+
+/** The computer signing in (behind a proxy, the address it reports). */
+async function clientIp() {
+  const h = await headers();
+  return h.get("x-forwarded-for")?.split(",")[0]?.trim() || h.get("x-real-ip") || "unknown";
 }
 
 async function siteUrl() {

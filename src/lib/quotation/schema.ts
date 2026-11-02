@@ -3,7 +3,7 @@ import { FONTS } from "./cell-format";
 import { HIDEABLE_COLUMNS, STANDARD_COLUMNS } from "./types";
 import { currencyCode, isoDate, optNum, optText, reqNum, reqText } from "../validation";
 
-export const MAX_QUOTE_LINES = 500;
+const MAX_QUOTE_LINES = 500;
 export const MAX_ADJUSTMENTS = 20;
 export const MAX_SHEETS = 20;
 export const MAX_EXTRA_COLUMNS = 15;
@@ -32,13 +32,13 @@ const cellFmtSchema = z
   })
   .strict();
 /** Excel's own limits for a sheet name: 1-31 characters, none of : \ / ? * [ ] */
-export const sheetNameSchema = z.preprocess(
+const sheetNameSchema = z.preprocess(
   (v) => String(v ?? "").trim(),
   z.string().min(1, "Sheet name is required").max(31, "Sheet name can be at most 31 characters").regex(/^[^:\\/?*[\]]+$/, "Sheet name cannot contain : \\ / ? * [ ]"),
 );
 
 /** One discount / charge / tax line. Percentages are capped at 100. */
-export const adjustmentSchema = z
+const adjustmentSchema = z
   .object({
     kind: z.enum(["discount", "charge", "tax"]),
     label: z.preprocess((v) => String(v ?? "").trim(), z.string().max(40, "Name must be 40 characters or fewer")),
@@ -47,7 +47,7 @@ export const adjustmentSchema = z
   })
   .refine((a) => a.mode !== "percent" || a.value <= 100, { message: "Percentage cannot be more than 100", path: ["value"] });
 
-export const quoteHeaderSchema = z
+const quoteHeaderSchema = z
   .object({
     status: z.enum(["draft", "sent", "accepted", "rejected", "expired"]),
     quote_date: isoDate,
@@ -63,8 +63,8 @@ export const quoteHeaderSchema = z
     customer_address: optText(500),
     currency: currencyCode,
     exchange_rate: reqNum(0.000001, 1_000_000),
-    // The commission %: customer price = China price / (1 - commission).
-    margin_pct: reqNum(0, 95, 0),
+    // The commission %: customer price = China price x (1 + commission).
+    margin_pct: reqNum(0, 500, 0),
     pricing_basis: z.enum(["piece", "kg"]),
     rate_per_kg: optNum(0, 10_000_000),
     adjustments: z.array(adjustmentSchema).max(MAX_ADJUSTMENTS, `At most ${MAX_ADJUSTMENTS} bill lines`),
@@ -92,7 +92,7 @@ export const quoteHeaderSchema = z
     path: ["rate_per_kg"],
   });
 
-export const quoteLineSchema = z.object({
+const quoteLineSchema = z.object({
   sheet: z.number().int().min(0).max(MAX_SHEETS - 1),
   /** Row on its sheet, empty rows included (lines open again in the same rows). */
   row: z.number().int().min(0).max(9999).optional(),
@@ -133,5 +133,3 @@ export const saveQuotationSchema = z
     message: "Two sheets have the same name",
     path: ["header", "sheet_names"],
   });
-
-export type SaveQuotationInput = z.infer<typeof saveQuotationSchema>;

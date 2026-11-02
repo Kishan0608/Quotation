@@ -12,7 +12,10 @@ import { ConfirmDialog } from "@/components/ui/dialog";
 import { Field, Input, Textarea } from "@/components/ui/field";
 import { fmtDateTime, parseNumber, round2 } from "@/lib/format";
 import type { CustomerPick } from "@/lib/customers/schema";
-import { autoUnitPrice, computeTotals, currencyLabel, isBlankLine, repriceLines } from "@/lib/quotation/calc";
+import { cn } from "@/lib/cn";
+import { autoUnitPrice, commissionOfMultiplier, computeTotals, currencyLabel, isBlankLine, MAX_COMMISSION, multiplierOf, repriceLines } from "@/lib/quotation/calc";
+import { chinaLine } from "@/lib/quotation/china-document";
+import { sortLines } from "@/lib/quotation/line-order";
 import { applyInventoryChanges } from "@/lib/quotation/live-inventory";
 import { HIDEABLE_COLUMNS, STANDARD_COLUMNS, type ColumnLayoutPatch, type CompanyInfo, type QuoteDocument, type QuoteHeader, type QuoteLine, type StandardColumn } from "@/lib/quotation/types";
 import { useLocalStorage, writeLocalStorage } from "@/lib/use-local-storage";
@@ -26,6 +29,8 @@ import { SheetGrid } from "./sheet-grid";
 import { useInventoryChanges } from "./use-inventory-changes";
 
 const DRAFT_KEY = "qp.draft.new";
+/** How the commission box is typed on this computer: "multiply" (x 1.25), else a percentage. */
+const COMMISSION_MODE_KEY = "qp.commission.mode";
 // Lines are priced in RMB, so only these change line prices (the exchange rate applies to the total).
 const PRICING_KEYS: (keyof QuoteHeader)[] = ["margin_pct", "pricing_basis", "rate_per_kg"];
 
@@ -47,7 +52,7 @@ function withCustomerSheet(h: QuoteHeader, patch: Partial<Pick<QuoteHeader, "cus
   return { ...next, sheet_names: [name, ...rest] };
 }
 
-export type BuilderProps = {
+type BuilderProps = {
   id: string | null;
   quoteNo: string | null;
   preparedBy: string | null;
@@ -85,22 +90,20 @@ export function QuotationBuilder(props: BuilderProps) {
   /**
    * The "China" tab: the first sheet's lines at the China (inventory) price. It is the same lines
    * as the customer's sheet, so adding, editing or deleting in either tab changes both; only the
-   * price differs (customer price = China price / (1 - commission)).
+   * price differs (customer price = China price x (1 + commission)).
    */
   const [chinaView, setChinaView] = useState(true);
   const sheetIndex = chinaView ? 0 : Math.min(activeSheet, header.sheet_names.length - 1);
   const sheetLines = useMemo(() => lines.filter((l) => l.sheet === sheetIndex), [lines, sheetIndex]);
   const sheetTotals = useMemo(() => computeTotals(sheetLines.filter((l) => !isBlankLine(l)), header), [sheetLines, header]);
-  const chinaLines = useMemo(
-    () => (chinaView ? sheetLines.map((l) => ({ ...l, unit_price: l.base_price, price_overridden: false, overrides: undefined })) : []),
-    [chinaView, sheetLines],
-  );
+  const chinaLines = useMemo(() => (chinaView ? sheetLines.map(chinaLine) : []), [chinaView, sheetLines]);
   const chinaTotals = useMemo(() => computeTotals(chinaLines.filter((l) => !isBlankLine(l)), header), [chinaLines, header]);
 
   // ---- Line history (undo / redo) -------------------------------------------------
+  /** `steps`: in-between states Undo goes back through first (an import before its sorting). */
   const commitLines = useCallback(
-    (next: QuoteLine[]) => {
-      setHistory((h) => ({ past: [...h.past.slice(-49), lines], future: [] }));
+    (next: QuoteLine[], steps: QuoteLine[][] = []) => {
+      setHistory((h) => ({ past: [...h.past, lines, ...steps].slice(-50), future: [] }));
       setLines(next);
       setDirty(true);
     },
@@ -200,15 +203,17 @@ export function QuotationBuilder(props: BuilderProps) {
     }
   };
 
-  /** Replaces the lines of sheet `target` (default: the active one), keeping the other sheets (and sheet order). */
-  const commitSheetLines = (next: QuoteLine[], target = sheetIndex) => {
+  /** All lines with sheet `target`'s replaced by `next`, keeping the other sheets (and sheet order). */
+  const withSheetLines = (next: QuoteLine[], target = sheetIndex) => {
     const merged: QuoteLine[] = [];
     for (let s = 0; s < header.sheet_names.length; s++) {
       if (s === target) merged.push(...next.map((l) => (l.sheet === s ? l : { ...l, sheet: s })));
       else merged.push(...lines.filter((l) => l.sheet === s));
     }
-    commitLines(merged);
+    return merged;
   };
+  /** Replaces the lines of sheet `target` (default: the active one). */
+  const commitSheetLines = (next: QuoteLine[], target = sheetIndex) => commitLines(withSheetLines(next, target));
 
   /**
    * An edit on the China tab: its price is the China price (base_price); the customer price
@@ -238,22 +243,30 @@ export function QuotationBuilder(props: BuilderProps) {
   };
 
   // ---- Commission (the box above the sheet): Enter re-prices every customer price ----------
-  const [commissionDraft, setCommissionDraft] = useState(String(header.margin_pct || ""));
-  const [commissionSeen, setCommissionSeen] = useState(header.margin_pct);
-  if (commissionSeen !== header.margin_pct) {
-    setCommissionSeen(header.margin_pct);
-    setCommissionDraft(String(header.margin_pct || ""));
+  // Typed as a percentage (China price + 25%) or a multiplier (China price x 1.25): the same
+  // commission either way (header.margin_pct); the box remembers the way it was last used.
+  const multiply = useLocalStorage(COMMISSION_MODE_KEY) === "multiply";
+  const commissionText = (commission: number) => (!commission ? "" : String(multiply ? multiplierOf(commission) : commission));
+  const commissionShown = `${multiply}:${header.margin_pct}`;
+  const [commissionDraft, setCommissionDraft] = useState(() => commissionText(header.margin_pct));
+  const [commissionSeen, setCommissionSeen] = useState(commissionShown);
+  if (commissionSeen !== commissionShown) {
+    setCommissionSeen(commissionShown);
+    setCommissionDraft(commissionText(header.margin_pct));
   }
   const applyCommission = () => {
-    const value = commissionDraft.trim() === "" ? 0 : parseNumber(commissionDraft);
-    if (value == null || value < 0 || value > 95) {
-      toast.error("Enter a commission from 0 to 95 %.");
-      setCommissionDraft(String(header.margin_pct || ""));
+    const typed = commissionDraft.trim() === "" ? (multiply ? 1 : 0) : parseNumber(commissionDraft);
+    const value = typed == null ? null : multiply ? commissionOfMultiplier(typed) : round2(typed);
+    if (value == null || value < 0 || value > MAX_COMMISSION) {
+      toast.error(multiply ? `Enter a multiplier from 1 to ${multiplierOf(MAX_COMMISSION)}.` : `Enter a commission from 0 to ${MAX_COMMISSION} %.`);
+      setCommissionDraft(commissionText(header.margin_pct));
       return;
     }
     if (value === header.margin_pct) return;
     setField("margin_pct", value);
-    toast.success(value ? `Commission ${value}%: customer prices updated (China price ÷ ${round2(1 - value / 100)}).` : "Commission removed: customer prices = China prices.");
+    if (!value) toast.success("Commission removed: customer prices = China prices.");
+    else if (multiply) toast.success(`Customer prices updated: China price × ${multiplierOf(value)}.`);
+    else toast.success(`Commission ${value}%: customer prices updated (China price + ${value}%).`);
   };
 
   /** The tabs: China first, then the quotation's sheets (the first one named after the customer). */
@@ -296,9 +309,10 @@ export function QuotationBuilder(props: BuilderProps) {
   };
 
   /**
-   * Lines from an imported list, in the file's order, after the last filled row. An inventory
-   * item already on this sheet gets the quantity added; a line not in the inventory comes in as a
-   * new line with the file's text. Lines still to be checked carry the reason (red row).
+   * Lines from an imported list, after the last filled row, then the whole sheet put in the
+   * standard order (line-order.ts; Ctrl+Z once gives the file's order back). An inventory item
+   * already on this sheet gets the quantity added; a line not in the inventory comes in as a new
+   * line with the file's text. Lines still to be checked carry the reason (red row).
    */
   const [importOpen, setImportOpen] = useState(false);
   const addItems = (list: ImportedLine[]) => {
@@ -332,10 +346,13 @@ export function QuotationBuilder(props: BuilderProps) {
       else rows.splice(at, 0, line);
       added++;
     }
-    commitSheetLines(rows);
+    const ordered = sortLines(rows);
+    if (ordered === rows) commitSheetLines(rows);
+    else commitLines(withSheetLines(ordered), [withSheetLines(rows)]);
     const flagged = list.filter((l) => l.check).length;
     toast.success(
       `Imported ${added} line${added === 1 ? "" : "s"}${updated ? `, ${updated} already on the sheet (quantity added)` : ""}.` +
+        (ordered === rows ? "" : " Sorted in standard order (Ctrl+Z undoes the sorting).") +
         (flagged ? ` ${flagged} red line${flagged === 1 ? "" : "s"} to check on the sheet.` : ""),
     );
     document.getElementById("step-sheet")?.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -504,7 +521,11 @@ export function QuotationBuilder(props: BuilderProps) {
               <FileUp /> Import
             </Button>
           ) : null}
-          <ExportMenu buildDocument={buildDocument} fileBase={{ quoteNo: quoteNo ?? "Quotation", customer: header.customer_name, date: header.quote_date }} />
+          <ExportMenu
+            buildDocument={buildDocument}
+            fileBase={{ quoteNo: quoteNo ?? "Quotation", customer: header.customer_name, date: header.quote_date }}
+            customerSheet={header.sheet_names[0] || "Quotation"}
+          />
           {!readOnly ? (
             <Button onClick={save} loading={saving} title="Save (Ctrl+S)">
               <Save /> Save
@@ -589,23 +610,37 @@ export function QuotationBuilder(props: BuilderProps) {
             <label htmlFor="q-commission" className="font-medium text-slate-700">
               Commission
             </label>
-            <div className="relative">
-              <input
-                id="q-commission"
-                inputMode="decimal"
-                value={commissionDraft}
-                placeholder="0"
-                onChange={(e) => setCommissionDraft(e.target.value)}
-                onBlur={applyCommission}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") {
-                    e.preventDefault();
-                    applyCommission();
-                  }
-                }}
-                className="num h-8 w-24 rounded-md border border-slate-300 bg-white pr-7 pl-2.5 text-right outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100"
-              />
-              <span className="pointer-events-none absolute top-1/2 right-2.5 -translate-y-1/2 text-slate-400">%</span>
+            <input
+              id="q-commission"
+              inputMode="decimal"
+              value={commissionDraft}
+              placeholder={multiply ? "1" : "0"}
+              onChange={(e) => setCommissionDraft(e.target.value)}
+              onBlur={applyCommission}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  applyCommission();
+                }
+              }}
+              className="num h-8 w-24 rounded-md border border-slate-300 bg-white px-2.5 text-right outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100"
+            />
+            <div className="flex rounded-lg border border-slate-300 bg-white p-0.5" role="radiogroup" aria-label="Commission as">
+              {(["percent", "multiply"] as const).map((m) => (
+                <button
+                  key={m}
+                  type="button"
+                  role="radio"
+                  aria-checked={(m === "multiply") === multiply}
+                  title={m === "percent" ? "Percentage: China price + %" : "Multiply: China price × number"}
+                  // Switching keeps the commission (shown the other way); a number not yet entered is dropped.
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => writeLocalStorage(COMMISSION_MODE_KEY, m === "multiply" ? "multiply" : null)}
+                  className={cn("h-6.5 w-8 rounded-md font-medium", (m === "multiply") === multiply ? "bg-brand-600 text-white" : "text-slate-600 hover:bg-slate-100")}
+                >
+                  {m === "percent" ? "%" : "×"}
+                </button>
+              ))}
             </div>
           </div>
         ) : null}

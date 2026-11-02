@@ -14,7 +14,7 @@ describe("inventory changes reach an open quotation", () => {
     const r = applyInventoryChanges([line({ inventory_item_id: "a", description: "114X3.5MM", base_price: 6.7, unit_price: 8.38 })], [item("a", "114X3.5MM", 8)], pricing);
     assert.equal(r.updated, 1);
     assert.equal(r.lines[0].base_price, 8);
-    assert.equal(r.lines[0].unit_price, 10);
+    assert.equal(r.lines[0].unit_price, 9.6);
   });
 
   it("a price typed by hand stays", () => {
@@ -27,7 +27,7 @@ describe("inventory changes reach an open quotation", () => {
     const r = applyInventoryChanges([line({ description: "610X8MM", check: "Not in your inventory" })], [item("n", "610 X 8MM", 400, "1750MM")], pricing);
     assert.equal(r.linked, 1);
     assert.equal(r.lines[0].inventory_item_id, "n");
-    assert.equal(r.lines[0].unit_price, 500);
+    assert.equal(r.lines[0].unit_price, 480);
     assert.equal(r.lines[0].remarks, "1750MM");
     assert.equal(r.lines[0].check, undefined);
   });

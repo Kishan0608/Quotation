@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { PickerItem } from "@/lib/inventory/types";
+import { parseNpsValue } from "@/lib/pipe/sizes";
 import { conflict } from "./ai-checks";
 import type { Catalog } from "./ai-prompt";
 import { matchCandidates, normalizeName, type ImportIssue, type ImportMatch, type ImportRow } from "./match";
@@ -11,6 +12,8 @@ const aiLineSchema = z.object({
   length: z.string().nullable(),
   note: z.string().nullable(),
   size_inch: z.string().nullable(),
+  /** The numbered line this entry is for (lines read by the standard reader); null otherwise. */
+  line: z.number().int().nullable().optional(),
   reason: z.string(),
   items: z.array(z.object({ n: z.number().int(), name: z.string() })),
   several_fit: z.boolean(),
@@ -126,6 +129,21 @@ function standardAsOwnLength(line: AiLine, catalog: Catalog): AiLine {
   return { ...line, length: null, differences: line.differences.filter((d) => !onlyStandardLength(d)) };
 }
 
+/**
+ * A "difference" that is only two names of one wall: XS = SCH80 up to 8", STD = SCH40 up to 10"
+ * ("SCHXS vs SCH80"). Anything else in it (a size, a class, a length) keeps it a difference.
+ */
+function sameWall(d: string, nps: number | null) {
+  if (nps == null) return false;
+  const t = d.toUpperCase();
+  const rest = t.replace(/\b(SCH\s*)?(XS|STD|80|40)\b|\bVS\.?\b|\bSCHEDULE\b|[\s.,:;()/-]+/g, "");
+  if (rest) return false;
+  // "SCHXS" writes the X right after SCH; XXS (double extra strong) is another wall.
+  const xs = /(?<!X)XS\b/.test(t) && /80\b/.test(t);
+  const std = /STD\b/.test(t) && /40\b/.test(t);
+  return (xs && nps <= 8) || (std && nps <= 10);
+}
+
 type Verdict = { status: ImportRow["status"]; issues: ImportIssue[]; matches: ImportMatch[]; why?: string };
 
 const scored = (items: PickerItem[], score: number) => items.map((item) => ({ item, score }));
@@ -152,7 +170,10 @@ function verdictOf(line: AiLine, catalog: Catalog, standard: ImportRow | undefin
   const first = line.items[0] ? resolvePick(line.items[0], catalog) : null;
   const picks = resolvePicks(line.items, catalog);
   const standardItem = standard?.status === "matched" ? standard.matches[0]?.item : undefined;
-  const differences = line.differences.map((d) => d.trim()).filter(Boolean);
+  const nps = parseNpsValue(line.size_inch);
+  const differences = line.differences.map((d) => d.trim()).filter((d) => d && !sameWall(d, nps));
+  // The standard matcher is sure of this very item (no tie) and the rules find nothing against it.
+  const standardSure = (item: PickerItem | null) => Boolean(item && standardItem && isCopy(item, standardItem) && !conflict(line, item));
 
   if (!picks.length) {
     // The AI's pick didn't resolve (a name written a little differently, a wrong number), but it
@@ -164,8 +185,19 @@ function verdictOf(line: AiLine, catalog: Catalog, standard: ImportRow | undefin
     if (standardItem) return { status: "check", issues: ["fuzzy"], matches: standard!.matches };
     return { status: "none", issues: ["missing"], matches: [] };
   }
+  // Both readers name the same item and the rules agree: sure, whatever doubts the AI wrote down
+  // ("B class 2.5mm vs SCH40" for a line that never said SCH40).
+  if (first && standardSure(first)) {
+    return { status: "matched", issues: [], matches: [{ item: first, score: SCORE.exact }, ...scored(picks.filter((p) => !isCopy(p, first)), SCORE.close)] };
+  }
+  // The rules prove the AI's pick wrong (another kind, size or wall: a TEE for "8'' SL/40 (MS
+  // ELBOW)") and the standard matcher is sure of an item they pass: that item.
+  if (first && conflict(line, first) && standardItem && standardSure(standardItem)) {
+    return { status: "matched", issues: [], matches: [{ item: standardItem, score: SCORE.exact }, ...scored(picks.filter((p) => !isCopy(p, standardItem)), SCORE.close)] };
+  }
   if (line.several_fit) {
     // A choice the AI couldn't make: the items that fit, and the same item in its other lengths.
+    // Near twins (6"XSCH40 and 6"XSCH40 90° of two shipments) stay the user's choice.
     const choices = unique([...picks, ...(first ? siblingsOf(first, catalog) : [])]).filter((item) => !conflict(line, item));
     if (choices.length > 1) return { status: "check", issues: ["similar"], matches: [...scored(choices, SCORE.exact), ...scored(picks.filter((p) => !choices.includes(p)), SCORE.close)] };
   }
@@ -207,6 +239,32 @@ export function toImportRows(answer: AiLine[], catalog: Catalog): ImportRow[] {
       issues,
       ...(length ? { length } : {}),
       ...(note ? { note } : {}),
+      ...(why ? { why } : {}),
+    };
+  });
+}
+
+/**
+ * The standard reader's rows of a text document, with the AI's matches for the lines it could not
+ * match for sure. An answer is used only through its line number and checked against the row's own
+ * text (what the customer wrote), never the AI's copy of it; a line the AI has nothing better for
+ * stays as the standard reader made it, and so do its quantity and note.
+ */
+export function resolveRows(rows: ImportRow[], answer: AiLine[], catalog: Catalog): ImportRow[] {
+  const byLine = new Map<number, AiLine>();
+  for (const a of answer) if (a.line != null && !byLine.has(a.line)) byLine.set(a.line, a);
+  return rows.map((row, i) => {
+    const a = row.status === "matched" ? undefined : byLine.get(i + 1);
+    if (!a) return row;
+    const line = standardAsOwnLength({ ...a, source: row.text, length: row.length ?? null, note: row.note ?? null }, catalog);
+    const v = verdictOf(line, catalog, row);
+    if (v.status === "none") return row;
+    const why = v.why ?? text(a.reason, 200);
+    return {
+      ...row,
+      status: v.status,
+      issues: [...v.issues, ...row.issues.filter((x) => x.startsWith("qty"))],
+      matches: withSuggestions(v.matches, row),
       ...(why ? { why } : {}),
     };
   });

@@ -1,4 +1,4 @@
-export type NewItem = { description: string; qty: number; length: string };
+type NewItem = { description: string; qty: number; length: string };
 
 /** One row per item (same name ignoring spaces, same length), quantities added. */
 export function mergeNewItems(items: NewItem[]): NewItem[] {

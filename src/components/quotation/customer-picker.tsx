@@ -9,7 +9,7 @@ import { cn } from "@/lib/cn";
 import { customerKey, type CustomerPick } from "@/lib/customers/schema";
 
 /** The quotation's own customer details, saved as a new customer from here. */
-export type CustomerDetails = { name: string; contact_person: string; phone: string; email: string; address: string };
+type CustomerDetails = { name: string; contact_person: string; phone: string; email: string; address: string };
 
 type Props = {
   id: string;

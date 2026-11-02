@@ -19,13 +19,9 @@ function lengthOf(note: string | null | undefined) {
  * length is another item (165X4.75MM 440MM vs Standard), and so is a concentric vs an eccentric
  * reducer.
  */
-export function itemKey(description: string, note?: string | null) {
-  return `${norm(description)}|${lengthOf(note) ?? ""}`;
-}
-
 export type ExistingItem = { id: string; description: string; note: string | null; unit_price: number | null };
 
-export type ImportPlan = {
+type ImportPlan = {
   /** New items, one row each (a later row of the same item only changes its price). */
   inserts: InventoryInput[];
   /** Price changes for items already in inventory, grouped by new price. */

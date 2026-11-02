@@ -32,7 +32,7 @@ const FIELDS = {
   },
 } as const;
 
-export type AiColumnKind = keyof typeof FIELDS;
+type AiColumnKind = keyof typeof FIELDS;
 
 const answerSchema = z.object({
   sheets: z.array(

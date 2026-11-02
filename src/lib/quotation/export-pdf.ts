@@ -24,7 +24,7 @@ const LINE: RGB = [191, 191, 191];
 const ZEBRA: RGB = [250, 250, 250];
 
 /** The built-in PDF fonts only cover Latin-1; map the usual suspects and drop the rest. */
-export function pdfSafe(text: string | null | undefined): string {
+function pdfSafe(text: string | null | undefined): string {
   if (!text) return "";
   return text
     .replace(/[“”″]/g, '"')
@@ -37,7 +37,7 @@ export function pdfSafe(text: string | null | undefined): string {
     .replace(/[^\n\r\t\x20-\x7E\xA0-\xFF]/g, "");
 }
 
-export type PdfOptions = { orientation?: "portrait" | "landscape" };
+type PdfOptions = { orientation?: "portrait" | "landscape" };
 
 const hexRgb = (hex: string): RGB => [parseInt(hex.slice(1, 3), 16), parseInt(hex.slice(3, 5), 16), parseInt(hex.slice(5, 7), 16)];
 
@@ -75,7 +75,7 @@ export async function buildQuotationPdf(
     compress: true,
   });
   pdf.setProperties({
-    title: `Quotation ${doc.quoteNo}`,
+    title: `${doc.china ? "China price" : "Quotation"} ${doc.quoteNo}`,
     subject: `Quotation for ${header.customer_name}`,
     author: company.company_name,
     creator: "Quotation Panel",
@@ -239,16 +239,18 @@ export async function buildQuotationPdf(
     };
   });
 
-  // One table per sheet (with its own TOTAL row); the sheet name is shown when there are several.
+  // One table per sheet (with its own TOTAL row); the sheet name is shown when there are
+  // several, and the China version says it is the China price.
   const sheetNames = header.sheet_names?.length
     ? header.sheet_names
     : ["Quotation"];
   for (let si = 0; si < sheetNames.length; si++) {
     const sheetLines = lines.filter((l) => (l.sheet ?? 0) === si);
     const sheetTotals = computeTotals(sheetLines, header);
-    if (sheetNames.length > 1) {
+    const heading = doc.china ? "China price" : sheetNames.length > 1 ? sheetNames[si] : null;
+    if (heading) {
       ensureSpace(16);
-      text(sheetNames[si], M, y, { size: 10, bold: true, color: BRAND });
+      text(heading, M, y, { size: 10, bold: true, color: BRAND });
       y += 5.5;
     }
     const baseFont = cols.length > 12 ? 7 : 7.8;
@@ -286,6 +288,7 @@ export async function buildQuotationPdf(
     const foot = [
       cols.map((c) => {
         if (c.key === "description") return "TOTAL";
+        if (c.key === "unit_price") return fmtMoney(sheetTotals.totalPrice);
         if (c.key === "qty") return fmtQty(sheetTotals.totalQty);
         if (c.kind === "totalWeight") return fmtWeight(sheetTotals.totalWeight);
         if (c.kind === "amount") return fmtMoney(sheetTotals.grossAmount);

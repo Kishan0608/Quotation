@@ -26,7 +26,7 @@ export function Select({ className, children, ...props }: ComponentProps<"select
   );
 }
 
-export function Label({ className, ...props }: ComponentProps<"label">) {
+function Label({ className, ...props }: ComponentProps<"label">) {
   return <label className={cn("mb-1.5 block text-xs font-medium text-slate-700", className)} {...props} />;
 }
 

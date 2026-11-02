@@ -3,7 +3,7 @@ import { cache } from "react";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 
-export type SessionUser = {
+type SessionUser = {
   id: string;
   email: string;
   fullName: string | null;
@@ -39,7 +39,7 @@ const loadSession = cache(async (): Promise<SessionState> => {
 });
 
 /** The signed-in, active user, or null for signed-out, unknown or deactivated users. */
-export async function getSessionUser(): Promise<SessionUser | null> {
+async function getSessionUser(): Promise<SessionUser | null> {
   return (await loadSession()).user;
 }
 

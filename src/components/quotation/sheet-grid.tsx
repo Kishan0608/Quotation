@@ -14,6 +14,7 @@ import {
   Eraser,
   Eye,
   ListFilter,
+  ListOrdered,
   Pencil,
   Plus,
   Redo2,
@@ -70,6 +71,7 @@ import {
   sheetColLetter,
   sheetColumnOrder,
 } from "@/lib/quotation/export-columns";
+import { sortLines } from "@/lib/quotation/line-order";
 import { MAX_EXTRA_COLUMNS, MAX_SHEETS } from "@/lib/quotation/schema";
 import {
   HIDEABLE_COLUMNS,
@@ -163,6 +165,7 @@ function newColumnKey(taken: ExtraColumn[]) {
 
 /** Value shown in the TOTAL row for a column (null = nothing). */
 function totalFor(id: string, totals: QuoteTotals): number | null {
+  if (id === "unit_price") return totals.totalPrice;
   if (id === "qty") return totals.totalQty;
   if (id === "total_weight") return totals.totalWeight;
   if (id === "amount") return totals.grossAmount;
@@ -542,6 +545,17 @@ export function SheetGrid({
     });
     onChange(sorted);
     setFilterMenu(null);
+  };
+
+  /** The quotation's standard order (line-order.ts): elbows, reducers, tees...; empty rows go last. Undo puts it back. */
+  const sortStandard = () => {
+    const sorted = sortLines(lines);
+    if (sorted === lines) {
+      toast.info("The items are already in standard order.");
+      return;
+    }
+    onChange(sorted);
+    toast.success("Sorted in standard order (Ctrl+Z to undo).");
   };
 
   /** Opens the sort & filter menu of column `c` where the right-click menu was. */
@@ -2347,6 +2361,17 @@ export function SheetGrid({
             >
               <ListFilter className="size-4 text-slate-500" /> Sort &amp; filter…
               {filters[cols[cursor.c].id] ? <span className="ml-auto text-[11px] text-[#217346]">on</span> : null}
+            </button>
+          ) : null}
+          {!readOnly ? (
+            <button
+              type="button"
+              role="menuitem"
+              className={menuItem}
+              disabled={!lines.some((l) => !isBlankLine(l))}
+              onClick={() => (setMenu(null), sortStandard())}
+            >
+              <ListOrdered className="size-4 text-slate-500" /> Sort in standard order
             </button>
           ) : null}
           {menu.kind !== "col" ? (

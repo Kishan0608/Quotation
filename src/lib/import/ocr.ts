@@ -97,7 +97,7 @@ type Read = { lines: Box[][]; text: string; confidence: number };
  * Table borders and shadows come out as stray marks on the edges of words ("“Items", "QTY]",
  * "250)", "1000,"). They are taken off; an inch mark after a number ("12\"") stays.
  */
-export function cleanWord(raw: string) {
+function cleanWord(raw: string) {
   // A list number ("2)", "3.") stays as it is.
   if (/^\d{1,3}[.)]$/.test(raw.trim())) return raw.trim();
   let t = raw.trim().replace(/^[“”"'‘’`|\[\]{}()_~,;:]+/, "").replace(/[\]|}{,;:“”‘’`_~]+$/, "");

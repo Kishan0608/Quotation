@@ -36,11 +36,12 @@ export function QuotationsList({ rows, total, filters, loadError }: Props) {
     if (timer.current) clearTimeout(timer.current);
   }, []);
 
-  const push = (patch: Partial<Record<"q" | "page", string | number>>) => {
-    const merged = { q: filters.q, page: filters.page, ...patch };
+  const push = (patch: Partial<Record<"q" | "page" | "size", string | number>>) => {
+    const merged = { q: filters.q, page: filters.page, size: filters.pageSize, ...patch };
     const params = new URLSearchParams();
     if (merged.q) params.set("q", String(merged.q));
     if (Number(merged.page) > 1) params.set("page", String(merged.page));
+    if (Number(merged.size) !== 25) params.set("size", String(merged.size));
     const qs = params.toString();
     startTransition(() => router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false }));
   };
@@ -152,7 +153,14 @@ export function QuotationsList({ rows, total, filters, loadError }: Props) {
         )}
       </div>
 
-      <Pagination page={filters.page} pageSize={filters.pageSize} total={total} noun={total === 1 ? "quotation" : "quotations"} onPage={(page) => push({ page })} />
+      <Pagination
+        page={filters.page}
+        pageSize={filters.pageSize}
+        total={total}
+        noun={total === 1 ? "quotation" : "quotations"}
+        onPage={(page) => push({ page })}
+        onPageSize={(size) => push({ size, page: 1 })}
+      />
 
       <ConfirmDialog
         open={toDelete != null}

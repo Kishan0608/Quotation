@@ -4,15 +4,22 @@ import { ChevronDown, Download, FileSpreadsheet, FileText } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import { chinaDocument } from "@/lib/quotation/china-document";
 import type { QuoteDocument } from "@/lib/quotation/types";
 
 type Props = {
   buildDocument: () => QuoteDocument | null;
   fileBase: { quoteNo: string; customer: string; date: string };
+  /** The customer's tab (the contact person, else the company): its PDF is called that in the menu. */
+  customerSheet: string;
 };
 
-/** Excel / PDF download. The file has exactly the sheet's columns (delete a column on the sheet to leave it out). */
-export function ExportMenu({ buildDocument, fileBase }: Props) {
+/**
+ * Excel / PDF download. The Excel file has both price lists (the China sheet, then the
+ * customer's, as on the screen); the PDF is one or the other, A4 portrait. The files have exactly
+ * the sheet's columns (delete a column on the sheet to leave it out).
+ */
+export function ExportMenu({ buildDocument, fileBase, customerSheet }: Props) {
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState<"xlsx" | "pdf" | null>(null);
   const ref = useRef<HTMLDivElement>(null);
@@ -32,7 +39,7 @@ export function ExportMenu({ buildDocument, fileBase }: Props) {
     };
   }, [open]);
 
-  const run = async (kind: "xlsx" | "pdf", orientation?: "portrait" | "landscape") => {
+  const run = async (kind: "xlsx" | "pdf", china = false) => {
     const doc = buildDocument();
     if (!doc) return;
     setBusy(kind);
@@ -40,14 +47,14 @@ export function ExportMenu({ buildDocument, fileBase }: Props) {
       const { downloadBlob, quoteFileName } = await import("@/lib/quotation/export-columns");
       if (kind === "xlsx") {
         const { buildQuotationWorkbook } = await import("@/lib/quotation/export-excel");
-        const buffer = await buildQuotationWorkbook(doc);
+        const buffer = await buildQuotationWorkbook(doc, chinaDocument(doc));
         downloadBlob(new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }), quoteFileName(fileBase.quoteNo, fileBase.customer, fileBase.date, "xlsx"));
       } else {
         const { buildQuotationPdf } = await import("@/lib/quotation/export-pdf");
-        const blob = await buildQuotationPdf(doc, { orientation });
-        downloadBlob(blob, quoteFileName(fileBase.quoteNo, fileBase.customer, fileBase.date, "pdf"));
+        const blob = await buildQuotationPdf(china ? chinaDocument(doc) : doc, { orientation: "portrait" });
+        downloadBlob(blob, quoteFileName(fileBase.quoteNo, fileBase.customer, fileBase.date, "pdf", china ? "CHINA" : ""));
       }
-      toast.success(kind === "xlsx" ? "Excel file downloaded." : "PDF downloaded.");
+      toast.success(kind === "xlsx" ? `Excel file downloaded (China + ${customerSheet} sheets).` : `PDF downloaded (${china ? "China" : customerSheet} price).`);
       setOpen(false);
     } catch (e) {
       console.error(e);
@@ -80,11 +87,11 @@ export function ExportMenu({ buildDocument, fileBase }: Props) {
             <button type="button" role="menuitem" onClick={() => run("xlsx")} disabled={busy != null} className={item}>
               <FileSpreadsheet className="size-4 text-excel-700" /> Excel workbook (.xlsx)
             </button>
-            <button type="button" role="menuitem" onClick={() => run("pdf", "portrait")} disabled={busy != null} className={item}>
-              <FileText className="size-4 text-red-600" /> PDF · A4 portrait
+            <button type="button" role="menuitem" onClick={() => run("pdf", true)} disabled={busy != null} className={item}>
+              <FileText className="size-4 text-red-600" /> PDF · China
             </button>
-            <button type="button" role="menuitem" onClick={() => run("pdf", "landscape")} disabled={busy != null} className={item}>
-              <FileText className="size-4 rotate-90 text-red-600" /> PDF · A4 landscape
+            <button type="button" role="menuitem" onClick={() => run("pdf")} disabled={busy != null} className={item}>
+              <FileText className="size-4 text-red-600" /> <span className="min-w-0 truncate">PDF · {customerSheet}</span>
             </button>
           </div>
         </div>

@@ -34,6 +34,10 @@ describe("kindOf", () => {
     assert.equal(kindOf("4x2 reducing tee sch40", false), "TEE");
     assert.equal(kindOf("ELBO,90,LR,BW,CS,A234,WPB,2IN,S40", false), "ELBOW");
     assert.equal(kindOf('1.1/2" S/80 45 deg elbow', false), "45° ELBOW");
+    // Comma spec lists.
+    assert.equal(kindOf("ELBO,45,LR,BW,CS,A234,WPB,3IN,40", false), "45° ELBOW");
+    assert.equal(kindOf("ELBOW,180,LR,BW,2IN,40", false), "180° BEND");
+    assert.equal(kindOf("ELBOW 45MM", false), "ELBOW");
     assert.equal(kindOf("Weld Neck Flange, 500nb Class 1500#", false), "FLANGE");
     assert.equal(kindOf('2"XSCH40', false), null);
     assert.equal(kindOf("457 x 5.8mm 1280mm long", false), null);
@@ -61,6 +65,32 @@ describe("conflict", () => {
   it("finds another kind", () => {
     assert.match(conflict(asked('2" SCH40 equal tee'), item('2"XSCH40')) ?? "", /TEE/);
     assert.match(conflict(asked('2" SCH40 45 deg elbow'), item('2"XSCH40')) ?? "", /45° ELBOW/);
+    assert.equal(conflict(asked("ELBO,45,LR,BW,CS,A234,WPB,3IN,40", { size_inch: "3" }), item('3"XSCH40 45°', "Standard")), null);
+  });
+
+  it("reads the customer's own way of writing sizes (wrong greens of the 2026-11-02 test run)", () => {
+    // Above 10" STD is not SCH40.
+    assert.match(conflict(asked("12’’ SL/40 (MS TEE)", { size_inch: "12" }), item('12"XSTD TEE')) ?? "", /wall/);
+    assert.equal(conflict(asked("8’’ SL/40 (MS ELBOW)", { size_inch: "8" }), item('8"XSTD 90°', "Standard")), null);
+    // Another OD is another item.
+    assert.match(conflict(asked("88 X 3MM", { size_inch: "3" }), item("89X3MM", "225MM")) ?? "", /OD/);
+    assert.match(conflict(asked("324 X 4MM", { size_inch: "12" }), item("325X4MM", "840MM")) ?? "", /OD/);
+    assert.equal(conflict(asked("88.9 X 3MM", { size_inch: "3" }), item("89X3MM", "225MM")), null);
+    // A plain size is a 90° elbow; a pipe is a pipe.
+    assert.match(conflict(asked('4" X 4.5MM', { size_inch: "4" }), item("114X4.5MM 45°", "Standard")) ?? "", /45° ELBOW/);
+    assert.match(conflict(asked('3" X OIL PIPE SCH40', { size_inch: "3" }), item('3"XSCH40 90°', "Standard")) ?? "", /PIPE/);
+    // B/2.5 MM is the wall: the same as 33X2.5MM.
+    assert.equal(conflict(asked("1’’ B/2.5 MM (MS ELBOW)", { size_inch: "1" }), item("33X2.5MM", "80MM")), null);
+    // A wall in mm against a schedule: within 0.1 mm the same wall, beyond it another.
+    assert.match(conflict(asked("1’’ B/2.5 MM (MS ELBOW)", { size_inch: "1" }), item('1"XSCH40', "Standard")) ?? "", /wall/);
+    assert.equal(conflict(asked('1 1/4" X 3.5MM', { size_inch: "1 1/4" }), item('11/4"XSCH40', "Standard")), null);
+    // A reducer's STD comes after its second size: above 10" it is not SCH40.
+    assert.match(conflict(asked("14’’ X 12’’ SL/40 (MS REDUCER CONCENTRIC)", { size_inch: "14", length: "CONCENTRIC" }), item('14"X12"XSTD REDUCER', "CONCENTRIC")) ?? "", /wall/);
+    assert.equal(conflict(asked("8’’ X 4’’ SL/40 (MS REDUCER CONCENTRIC)", { size_inch: "8", length: "CONCENTRIC" }), item('8"X4"XSCH40 REDUCER', "CONCENTRIC")), null);
+    // The purchase order's "MS LONG BEDN 3D" is a 3D bend; unknown words don't make a line an elbow.
+    assert.equal(kindOf("4’’ SL/40 (MS LONG BEDN 3D)", false), "3D BEND");
+    assert.equal(conflict(asked("4’’ SL/40 (MS LONG BEDN 3D)", { size_inch: "4" }), item('4"XSCH40 3D BEND', "Standard")), null);
+    assert.equal(conflict(asked('8" X SCH40 BEND', { size_inch: "8" }), item('8"XSCH40 3D BEND', "Standard")), null);
   });
 
   it("finds another flange class, type or facing", () => {

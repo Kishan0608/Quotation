@@ -9,7 +9,7 @@
 //   - NPS 56 and 60: the PDF prints the OD in the DN column.
 
 type W = number | null;
-export type ChartRow = readonly [
+type ChartRow = readonly [
   nps: string,
   npsValue: number,
   dn: number | null,

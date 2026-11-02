@@ -87,7 +87,7 @@ export type Extracted = { candidates: ImportCandidate[]; text: string; note?: st
  * Reads the item lines (text + quantity) out of an uploaded enquiry list. `judge` scores a set
  * of candidates (how many inventory items they find), so the OCR keeps its better read.
  */
-export async function extractCandidates(buf: Buffer, kind: ImportKind, judge: (c: ImportCandidate[]) => number): Promise<Extracted> {
+export async function extractCandidates(buf: Buffer, kind: ImportKind, judge: (c: ImportCandidate[]) => number, options: { ocr?: boolean } = {}): Promise<Extracted> {
   const limit = (c: ImportCandidate[]) => c.slice(0, IMPORT_MAX_ROWS);
   const scoreLines = (lines: Box[][]) => judge(boxesToCandidates(lines).candidates);
   const fromOcr = async (image: Buffer) => {
@@ -112,7 +112,9 @@ export async function extractCandidates(buf: Buffer, kind: ImportKind, judge: (c
     }
     return { candidates: limit(lines.map(parseLine).filter((c): c is ImportCandidate => c != null)), text, ocr: false };
   }
+  // Without OCR (options.ocr false) a picture or a scanned PDF gives no lines: the caller reads it another way.
   if (kind === "image") {
+    if (options.ocr === false) return { candidates: [], text: "", ocr: true };
     const r = await fromOcr(buf);
     return { candidates: limit(r.candidates), text: r.text, ocr: true };
   }
@@ -124,6 +126,7 @@ export async function extractCandidates(buf: Buffer, kind: ImportKind, judge: (c
   const candidates = pages.flatMap((lines) => boxesToCandidates(lines).candidates);
   const text = pages.map((lines) => lines.map((l) => l.map((b) => b.text).join(" ")).join("\n")).join("\n\n");
   if (judge(candidates) > 0 || text.replace(/\s/g, "").length > 200) return { candidates: limit(candidates), text, ocr: false };
+  if (options.ocr === false) return { candidates: [], text: "", ocr: true };
 
   const scanned: ImportCandidate[] = [];
   const texts: string[] = [];

@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { PickerItem } from "@/lib/inventory/types";
 import { buildCatalog } from "./ai-prompt";
-import { resolvePicks, toImportRows, type AiLine } from "./ai-rows";
+import { resolvePicks, resolveRows, toImportRows, type AiLine } from "./ai-rows";
+import type { ImportRow } from "./match";
 
 const item = (id: string, description: string, note: string | null = null, extra: Partial<PickerItem> = {}): PickerItem => ({
   id,
@@ -120,12 +121,26 @@ describe("toImportRows", () => {
     assert.ok(row.issues.includes("size"));
   });
 
-  it("when the AI's pick fails the checks and the standard matcher is sure, the standard item comes first", () => {
+  it("when the checks prove the AI's pick wrong and the standard matcher is sure of one they pass, that one is the match", () => {
     const own = buildCatalog([...inventory, item("thin", "355X5MM", "1000MM"), item("thick", "355X5.5MM", "1000MM")]);
     const [row] = toImportRows([line({ source: "355X5MM", size_inch: "14", items: [{ n: own.items.findIndex((i) => i.id === "thick") + 1, name: "355X5.5MM" }] })], own);
-    assert.equal(row.status, "check");
-    assert.ok(row.issues.includes("similar"));
+    assert.equal(row.status, "matched");
     assert.equal(row.matches[0].item.id, "thin");
+  });
+
+  it("when the AI's pick is the item the standard matcher is sure of, the AI's own doubts don't make it red", () => {
+    const [row] = toImportRows([line({ source: "114X3.5MM", size_inch: "4", items: [pick("elbow4mm")], differences: ["B class 3.5mm vs SCH40"] })], catalog);
+    assert.equal(row.status, "matched");
+    assert.equal(row.matches[0].item.id, "elbow4mm");
+  });
+
+  it('XS vs SCH80 (up to 8") and STD vs SCH40 (up to 10") are one wall, not a difference', () => {
+    const own = buildCatalog([...inventory, item("xs2", '2"XSCHXS 45°', "Standard")]);
+    const n = own.items.findIndex((i) => i.id === "xs2") + 1;
+    const [same] = toImportRows([line({ source: "ELBO,45,LR,BW,2IN,80", size_inch: "2", items: [{ n, name: '2"XSCHXS 45°' }], differences: ["SCHXS vs SCH80"] })], own);
+    assert.equal(same.status, "matched");
+    const [other] = toImportRows([line({ source: "ELBO,45,LR,BW,2IN,80", size_inch: "2", items: [{ n, name: '2"XSCHXS 45°' }], differences: ["SCH40 vs SCH80"] })], own);
+    assert.equal(other.status, "check");
   });
 
   it("several items that fit equally are a choice for the user", () => {
@@ -246,23 +261,17 @@ describe("toImportRows", () => {
     assert.equal(row.status, "check");
   });
 
-  it("when the standard matcher is sure of another item, both are offered (the AI's pick first when it passes the checks)", () => {
+  it("a pick with another wall (4\" SCH40 = 6.02 mm for a 3.5 mm line) loses to the exact item the standard matcher is sure of", () => {
     const [row] = toImportRows([line({ source: "114X3.5MM", size_inch: "4", items: [pick("elbow4sch")] })], catalog);
-    assert.equal(row.status, "check");
-    assert.ok(row.issues.includes("similar"));
-    assert.deepEqual(
-      row.matches.filter((m) => m.score === 1).map((m) => m.item.id),
-      ["elbow4sch", "elbow4mm"],
-    );
+    assert.equal(row.status, "matched");
+    assert.equal(row.matches[0].item.id, "elbow4mm");
   });
 
-  it("when the AI's pick is another kind and the standard matcher is sure, the standard item comes first", () => {
+
+  it("when the AI's pick is another kind and the standard matcher is sure, the standard item is the match", () => {
     const [row] = toImportRows([line({ source: '2"XSCH40 TEE', size_inch: "2", items: [pick("elbow2")] })], catalog);
-    assert.equal(row.status, "check");
-    assert.ok(row.issues.includes("similar"));
-    const top = row.matches.filter((m) => m.score === 1).map((m) => m.item.id);
-    assert.ok(["tee2", "tee2copy"].includes(top[0]));
-    assert.ok(top.includes("elbow2"));
+    assert.equal(row.status, "matched");
+    assert.ok(["tee2", "tee2copy"].includes(row.matches[0].item.id));
   });
 
   it("a missing or unclear quantity is flagged", () => {
@@ -286,5 +295,31 @@ describe("toImportRows", () => {
     const rows = toImportRows([line({ source: "MS ELBOW", qty: null, items: [] }), line({ source: '2"XSCH40', size_inch: "2", items: [pick("elbow2")] })], catalog);
     assert.equal(rows.length, 2);
     assert.equal(rows[1].matches[0].item.id, "elbow2");
+  });
+});
+
+describe("resolveRows: the AI matches only the lines the standard reader couldn't", () => {
+  const red = (text: string): ImportRow => ({ text, qty: 5, matches: [], status: "none", issues: ["missing"] });
+  const sure = (text: string, id: string): ImportRow => ({ text, qty: 5, matches: [{ item: inventory.find((i) => i.id === id)!, score: 1 }], status: "matched", issues: [] });
+
+  it("an AI pick that passes the checks on the customer's own line makes it green", () => {
+    const [row] = resolveRows([red("114 X 3.5MM ELBOW")], [line({ line: 1, source: "114X3.5MM", size_inch: "4", items: [pick("elbow4mm")] })], catalog);
+    assert.equal(row.status, "matched");
+    assert.equal(row.matches[0].item.id, "elbow4mm");
+    assert.equal(row.text, "114 X 3.5MM ELBOW", "the customer's text stays");
+    assert.equal(row.qty, 5);
+  });
+
+  it("checks the customer's line, not the AI's copy: a dropped schedule can't make a wrong pick green", () => {
+    // The AI wrote '2" TEE' (no SCH80) and picked the SCH40 tee.
+    const [row] = resolveRows([red('2" SCH80 TEE')], [line({ line: 1, source: '2" TEE', size_inch: "2", items: [pick("tee2")] })], catalog);
+    assert.equal(row.status, "check");
+  });
+
+  it("answers for green lines, unknown line numbers or with nothing found change nothing", () => {
+    const rows = [sure('2"XSCH40', "elbow2"), red("UNKNOWN THING")];
+    const out = resolveRows(rows, [line({ line: 1, items: [pick("tee2")] }), line({ line: 7, items: [pick("tee2")] }), line({ line: 2, items: [] })], catalog);
+    assert.equal(out[0], rows[0]);
+    assert.equal(out[1], rows[1]);
   });
 });

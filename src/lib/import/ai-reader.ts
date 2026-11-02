@@ -1,11 +1,12 @@
 import "server-only";
 import { z } from "zod";
 import type { PickerItem } from "@/lib/inventory/types";
-import { AI_MODEL, AI_RESPONSE_SCHEMA, buildCatalog, systemInstruction, textRequests } from "./ai-prompt";
-import { aiAnswerSchema, toImportRows, type AiLine } from "./ai-rows";
+import { AI_MODEL, AI_RESPONSE_SCHEMA, buildCatalog, resolveRequests, systemInstruction, textRequests } from "./ai-prompt";
+import { aiAnswerSchema, resolveRows, toImportRows, type AiLine } from "./ai-rows";
 import { geminiTurn, retryAfterMs, waitFor } from "./gemini-limit";
-import { excelRows, IMPORT_MAX_ROWS, type ImportKind } from "./extract";
-import type { ImportRow } from "./match";
+import { excelRows, extractCandidates, IMPORT_MAX_ROWS, type ImportKind } from "./extract";
+import { matchCandidates, type ImportRow } from "./match";
+import type { ImportCandidate } from "./parse-lines";
 
 const ENDPOINT = `https://generativelanguage.googleapis.com/v1beta/models/${AI_MODEL}:generateContent`;
 /**
@@ -25,7 +26,22 @@ const MAX_IMAGE_SIDE = 3_000;
 const IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/webp", "image/heic", "image/heif"]);
 
 type Part = { text: string } | { inlineData: { mimeType: string; data: string } };
-export type AiRead = { rows: ImportRow[]; text: string; note?: string };
+/** `ai`: the AI took part (false: the standard reader's lines, with no AI answer needed or to be had). */
+type AiRead = { rows: ImportRow[]; text: string; note?: string; ai: boolean };
+
+/**
+ * The standard reader's lines of a document with text, matched to the inventory; null for a
+ * picture or a scanned PDF (no text to read exactly), or when it finds no item lines.
+ */
+async function standardRead(buf: Buffer, kind: ImportKind, inventory: PickerItem[]) {
+  const judge = (c: ImportCandidate[]) => matchCandidates(c, inventory).reduce((s, r) => s + (r.status === "matched" ? 2 : r.status === "check" ? 1 : 0), 0);
+  const read = await extractCandidates(buf, kind, judge, { ocr: false });
+  if (read.ocr || !read.candidates.length) return null;
+  return { rows: matchCandidates(read.candidates, inventory), text: read.text, ...(read.note ? { note: read.note } : {}) };
+}
+
+/** A line as the AI is given it: the item as written, then its length and the customer's note. */
+const describeRow = (r: ImportRow) => [r.text, r.length ? `length: ${r.length}` : "", r.note ? `note: ${r.note}` : ""].filter(Boolean).join(" | ");
 
 const envelopeSchema = z.object({
   candidates: z
@@ -146,6 +162,26 @@ export async function readWithAi(buf: Buffer, kind: ImportKind, mime: string, in
     const catalog = buildCatalog(inventory);
     const system = systemInstruction(catalog);
     if (system.length > MAX_PROMPT_CHARS) return null;
+
+    // A document with text (Excel, CSV, text, a PDF with a text layer): the standard reader reads
+    // every line exactly as written, and the AI only matches the lines it could not match for sure.
+    // The AI can't change what the customer wrote, and far fewer requests are sent.
+    if (kind !== "image") {
+      const std = await standardRead(buf, kind, inventory);
+      if (std) {
+        const reds = std.rows.flatMap((r, i) => (r.status === "matched" ? [] : [i]));
+        if (!reds.length) return { ...std, ai: false };
+        try {
+          const requests = resolveRequests(reds.map((i) => `${i + 1}: ${describeRow(std.rows[i])}`)).map((t) => [{ text: t }]);
+          const answers = (await inParallel(requests, PARALLEL_REQUESTS, AbortSignal.timeout(TIMEOUT_MS.text), (parts, s) => ask(key, system, parts, s))).flat();
+          return { ...std, rows: resolveRows(std.rows, answers, catalog), ai: true };
+        } catch (e) {
+          console.error("import: AI matching failed, the standard reader's lines are used:", (e instanceof Error ? e.message : String(e)).slice(0, 300));
+          return { ...std, ai: false };
+        }
+      }
+    }
+
     const doc = await documentRequests(buf, kind, mime);
     if (!doc.requests.length) return null;
     const signal = AbortSignal.timeout(kind === "pdf" || kind === "image" ? TIMEOUT_MS.scan : TIMEOUT_MS.text);
@@ -153,6 +189,7 @@ export async function readWithAi(buf: Buffer, kind: ImportKind, mime: string, in
     if (!lines.length) return null;
     const kept = lines.slice(0, IMPORT_MAX_ROWS);
     return {
+      ai: true,
       rows: toImportRows(kept, catalog),
       text: doc.text || kept.map((l) => (l.qty != null ? `${l.source}  ${l.qty}` : l.source)).join("\n"),
       note: lines.length > kept.length ? `Only the first ${IMPORT_MAX_ROWS} items were read.` : undefined,
