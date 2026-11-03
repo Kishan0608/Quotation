@@ -1,7 +1,7 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { todayISO } from "@/lib/format";
-import { MAX_COMMISSION } from "@/lib/quotation/calc";
+import { MAX_COMMISSION, MIN_COMMISSION } from "@/lib/quotation/calc";
 import type { CompanyInfo, QuoteHeader } from "@/lib/quotation/types";
 import type { CompanySettingsRow, Database } from "@/lib/supabase/database.types";
 import { getCompanySettings } from "./quotations";
@@ -67,7 +67,7 @@ export function defaultHeader(s: CompanySettingsRow): QuoteHeader {
     currency: s.base_currency,
     exchange_rate: 1,
     // The commission % (customer price = China price x (1 + commission)).
-    margin_pct: Math.min(Math.max(Number(s.default_margin_pct) || 0, 0), MAX_COMMISSION),
+    margin_pct: Math.min(Math.max(Number(s.default_margin_pct) || 0, MIN_COMMISSION), MAX_COMMISSION),
     pricing_basis: "piece",
     rate_per_kg: null,
     // The company's default tax (Company settings) is added as the first bill line.

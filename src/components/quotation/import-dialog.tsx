@@ -368,7 +368,7 @@ export function ImportDialog({ open, onClose, onAdd, priceOf }: Props) {
           <>
             <p className="mr-auto text-xs text-slate-600">
               <span className="font-semibold text-slate-800">{toAdd.length}</span> line{toAdd.length === 1 ? "" : "s"} · <span className="num font-semibold text-slate-800">{fmtQty(sumQty)}</span> pcs ·
-              Final total <span className="num font-semibold text-slate-800">RMB {fmtMoney(sumTotal)}</span>
+              Total amount <span className="num font-semibold text-slate-800">RMB {fmtMoney(sumTotal)}</span>
               {counts!.red ? <span className="ml-2 text-red-600">· red lines come onto the sheet in red, to finish checking there</span> : null}
             </p>
             {newOnes.length ? (
@@ -523,7 +523,7 @@ export function ImportDialog({ open, onClose, onAdd, priceOf }: Props) {
                     <th className="w-24 px-1.5 py-2 text-right">RMB/PCS</th>
                     <th className="w-20 px-1.5 py-2 text-right">QTY</th>
                     <th className="w-44 px-1.5 py-2">Note / Length</th>
-                    <th className="w-28 px-3 py-2 text-right">Final total</th>
+                    <th className="w-28 px-3 py-2 text-right">Total amount</th>
                   </tr>
                 </thead>
                 <tbody>

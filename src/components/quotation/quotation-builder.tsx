@@ -13,7 +13,7 @@ import { Field, Input, Textarea } from "@/components/ui/field";
 import { fmtDateTime, parseNumber, round2 } from "@/lib/format";
 import type { CustomerPick } from "@/lib/customers/schema";
 import { cn } from "@/lib/cn";
-import { autoUnitPrice, commissionOfMultiplier, computeTotals, currencyLabel, isBlankLine, MAX_COMMISSION, multiplierOf, repriceLines } from "@/lib/quotation/calc";
+import { autoUnitPrice, commissionOfMultiplier, computeTotals, currencyLabel, isBlankLine, MAX_COMMISSION, MIN_COMMISSION, multiplierOf, repriceLines, typedTotals } from "@/lib/quotation/calc";
 import { chinaLine } from "@/lib/quotation/china-document";
 import { sortLines } from "@/lib/quotation/line-order";
 import { applyInventoryChanges } from "@/lib/quotation/live-inventory";
@@ -257,8 +257,9 @@ export function QuotationBuilder(props: BuilderProps) {
   const applyCommission = () => {
     const typed = commissionDraft.trim() === "" ? (multiply ? 1 : 0) : parseNumber(commissionDraft);
     const value = typed == null ? null : multiply ? commissionOfMultiplier(typed) : round2(typed);
-    if (value == null || value < 0 || value > MAX_COMMISSION) {
-      toast.error(multiply ? `Enter a multiplier from 1 to ${multiplierOf(MAX_COMMISSION)}.` : `Enter a commission from 0 to ${MAX_COMMISSION} %.`);
+    // Any number goes; only a price below zero (under -100%, a negative multiplier) can't be.
+    if (value == null || value < MIN_COMMISSION || value > MAX_COMMISSION) {
+      toast.error(value == null ? "Enter a number." : value < MIN_COMMISSION ? (multiply ? "The multiplier can't be below 0." : "The commission can't be below -100%.") : "That number is too large.");
       setCommissionDraft(commissionText(header.margin_pct));
       return;
     }
@@ -266,7 +267,7 @@ export function QuotationBuilder(props: BuilderProps) {
     setField("margin_pct", value);
     if (!value) toast.success("Commission removed: customer prices = China prices.");
     else if (multiply) toast.success(`Customer prices updated: China price × ${multiplierOf(value)}.`);
-    else toast.success(`Commission ${value}%: customer prices updated (China price + ${value}%).`);
+    else toast.success(`Commission ${value}%: customer prices updated (China price ${value < 0 ? "−" : "+"} ${Math.abs(value)}%).`);
   };
 
   /** The tabs: China first, then the quotation's sheets (the first one named after the customer). */
@@ -408,8 +409,8 @@ export function QuotationBuilder(props: BuilderProps) {
           Object.entries(l.fmt ?? {}).filter(([k]) => (k.startsWith("x:") ? header.extra_columns.some((c) => `x:${c.key}` === k) : STANDARD_COLUMNS.includes(k as StandardColumn))),
         ),
         actual_weight: l.actual_weight,
-        // Total KG / Total Amount / Final Total typed over the calculation.
-        overrides: l.overrides ?? {},
+        // Total KG / Total Amount typed over the calculation.
+        overrides: typedTotals(l.overrides),
       })),
     });
     setSaving(false);
@@ -559,7 +560,7 @@ export function QuotationBuilder(props: BuilderProps) {
                 hidden_columns: (draft.header.hidden_columns ?? []).filter((h) => (HIDEABLE_COLUMNS as readonly string[]).includes(h)),
                 column_titles: Object.fromEntries(Object.entries(draft.header.column_titles ?? {}).filter(([k]) => STANDARD_COLUMNS.includes(k as StandardColumn))),
               });
-              setLines(draft.lines.map((l) => ({ ...l, sheet: l.sheet ?? 0, actual_weight: l.actual_weight ?? "", extra: l.extra ?? {}, fmt: l.fmt ?? {}, overrides: l.overrides ?? {} })));
+              setLines(draft.lines.map((l) => ({ ...l, sheet: l.sheet ?? 0, actual_weight: l.actual_weight ?? "", extra: l.extra ?? {}, fmt: l.fmt ?? {}, overrides: typedTotals(l.overrides) })));
               setDirty(true);
               toast.success("Draft restored.");
             }}

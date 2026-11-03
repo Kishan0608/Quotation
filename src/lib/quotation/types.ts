@@ -19,7 +19,7 @@ export type QuoteHeader = {
   adjustments: Adjustment[];
   /** Sheet tabs of the quotation (Excel style); lines point to one by index. */
   sheet_names: string[];
-  /** Extra columns typed after Final Total (L, M, N...), in order. */
+  /** Extra columns typed after the standard ones (L, M, N...), in order. */
   extra_columns: ExtraColumn[];
   /** Standard columns the user deleted (hidden) on this quotation. */
   hidden_columns: HideableColumn[];
@@ -30,8 +30,9 @@ export type QuoteHeader = {
 };
 
 /** Standard sheet columns, in order. */
-// Actual Weight and Note / Length come after Final Total (the user's layout, 2026-10-31).
-export const STANDARD_COLUMNS = ["idx", "description", "unit_weight_kg", "unit_price", "qty", "total_weight", "amount", "net", "actual_weight", "remarks"] as const;
+// Actual Weight and Note / Length come after the totals (the user's layout, 2026-10-31); the
+// Final Total column was removed by the user (2026-11-02): Total Amount is the money total.
+export const STANDARD_COLUMNS = ["idx", "description", "unit_weight_kg", "unit_price", "qty", "total_weight", "amount", "actual_weight", "remarks"] as const;
 export type StandardColumn = (typeof STANDARD_COLUMNS)[number];
 
 /** A change to the sheet's columns (extra columns, deleted columns, renamed titles). */
@@ -40,8 +41,8 @@ export type ColumnLayoutPatch = Partial<Pick<QuoteHeader, "extra_columns" | "hid
 /** An extra column; `after` = the standard column it was inserted right after (none = at the end). */
 export type ExtraColumn = { key: string; name: string; after?: StandardColumn };
 
-/** Standard sheet columns that can be deleted (hidden) per quotation. No., Items and Final Total always stay. */
-export const HIDEABLE_COLUMNS = ["unit_weight_kg", "actual_weight", "unit_price", "qty", "total_weight", "amount", "remarks"] as const;
+/** Standard sheet columns that can be deleted (hidden) per quotation. No., Items and Total Amount always stay. */
+export const HIDEABLE_COLUMNS = ["unit_weight_kg", "actual_weight", "unit_price", "qty", "total_weight", "remarks"] as const;
 export type HideableColumn = (typeof HIDEABLE_COLUMNS)[number];
 
 export type AdjustmentKind = "discount" | "charge" | "tax";
@@ -60,7 +61,7 @@ export type AdjustmentLine = Adjustment & { amount: number };
  * Values typed over a calculated cell, like typing over a formula in Excel: they replace the
  * calculation until the cell is cleared.
  */
-export type LineOverrides = Partial<Record<"total_weight" | "amount" | "net", number>>;
+export type LineOverrides = Partial<Record<"total_weight" | "amount", number>>;
 
 export type QuoteLine = {
   key: string;
@@ -84,7 +85,7 @@ export type QuoteLine = {
   extra: Record<string, string>;
   /** Cell formatting (Home ribbon), by column id ("qty", "x:<key>", ...). */
   fmt: Record<string, CellFmt>;
-  /** Total KG / Total Amount / Final Total typed over their calculation (missing = calculated). */
+  /** Total KG / Total Amount typed over their calculation (missing = calculated). */
   overrides?: LineOverrides;
   /**
    * Why this line needs a look, set by Import (e.g. "Not in your inventory"). The row shows red on
@@ -128,7 +129,7 @@ export type QuoteTotals = {
   totalPrice: number;
   /** Sum of Total Amount (qty x price). */
   grossAmount: number;
-  /** Sum of the lines' Final Total (= Total Amount), in RMB. */
+  /** Sum of the lines' Total Amount, in RMB. */
   baseSubtotal: number;
   /** RMB -> quotation currency (1 when the quotation is in RMB). */
   exchangeRate: number;

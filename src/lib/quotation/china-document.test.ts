@@ -25,7 +25,7 @@ const header = {
 } as unknown as QuoteHeader;
 const line = (over: Partial<QuoteLine>): QuoteLine => ({ ...blankLine(0), description: '2"XSCH40', qty: 10, unit_weight_kg: 0.6, ...over });
 const lines = [
-  line({ base_price: 5.7, unit_price: 6.27, overrides: { net: 60 } }),
+  line({ base_price: 5.7, unit_price: 6.27, overrides: { amount: 60 } }),
   line({ description: '3"XSCH40', base_price: 3.6, unit_price: 3.96, qty: 5 }),
   line({ sheet: 1, description: '4"XSCH40', base_price: 9, unit_price: 9.9 }),
 ];
@@ -35,7 +35,7 @@ describe("the China price version of the downloads", () => {
   it("is the China tab: the first sheet's lines at the China price, in RMB, without the customer's GST or exchange rate", () => {
     const china = chinaDocument(doc);
     assert.deepEqual(china.lines.map((l) => l.unit_price), [5.7, 3.6]);
-    assert.equal(china.lines[0].overrides, undefined, "a Final Total typed for the customer doesn't apply");
+    assert.equal(china.lines[0].overrides, undefined, "a Total Amount typed for the customer doesn't apply");
     assert.equal(china.header.currency, "CNY");
     assert.equal(china.totals.grandTotal, 75, "57 + 18");
     assert.equal(doc.lines[0].unit_price, 6.27, "the customer's lines are not touched");

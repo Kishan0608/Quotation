@@ -1,8 +1,8 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { blankLine } from "@/components/quotation/line-utils";
-import { MAX_COMMISSION } from "@/lib/quotation/calc";
-import { STANDARD_COLUMNS, type QuoteHeader, type QuoteLine, type StandardColumn } from "@/lib/quotation/types";
+import { MAX_COMMISSION, MIN_COMMISSION, typedTotals } from "@/lib/quotation/calc";
+import { HIDEABLE_COLUMNS, STANDARD_COLUMNS, type HideableColumn, type QuoteHeader, type QuoteLine, type StandardColumn } from "@/lib/quotation/types";
 import type { CompanySettingsRow, Database, QuotationItemRow, QuotationRow, QuotationStatus } from "@/lib/supabase/database.types";
 
 type Client = SupabaseClient<Database>;
@@ -69,7 +69,7 @@ function toHeader(q: QuotationRow): QuoteHeader {
     customer_address: q.customer_address ?? "",
     currency: q.currency,
     exchange_rate: Number(q.exchange_rate),
-    margin_pct: Math.min(Math.max(Number(q.margin_pct) || 0, 0), MAX_COMMISSION),
+    margin_pct: Math.min(Math.max(Number(q.margin_pct) || 0, MIN_COMMISSION), MAX_COMMISSION),
     pricing_basis: q.pricing_basis,
     rate_per_kg: q.rate_per_kg == null ? null : Number(q.rate_per_kg),
     adjustments: (Array.isArray(q.adjustments) ? q.adjustments : []).map((a, i) => ({
@@ -83,7 +83,8 @@ function toHeader(q: QuotationRow): QuoteHeader {
     extra_columns: Array.isArray(q.extra_columns)
       ? q.extra_columns.map((c) => ({ key: String(c.key), name: String(c.name ?? ""), ...(c.after && STANDARD_COLUMNS.includes(c.after) ? { after: c.after } : {}) }))
       : [],
-    hidden_columns: Array.isArray(q.hidden_columns) ? q.hidden_columns : [],
+    // Only columns that can still be deleted (Total Amount always stays now).
+    hidden_columns: Array.isArray(q.hidden_columns) ? q.hidden_columns.filter((h): h is HideableColumn => (HIDEABLE_COLUMNS as readonly string[]).includes(h)) : [],
     column_titles:
       q.column_titles && typeof q.column_titles === "object"
         ? Object.fromEntries(Object.entries(q.column_titles).filter(([k, v]) => STANDARD_COLUMNS.includes(k as StandardColumn) && typeof v === "string"))
@@ -110,7 +111,7 @@ function toLine(i: QuotationItemRow): QuoteLine {
     actual_weight: i.actual_weight ?? "",
     extra: i.extra && typeof i.extra === "object" ? i.extra : {},
     fmt: i.fmt && typeof i.fmt === "object" ? i.fmt : {},
-    overrides: i.overrides && typeof i.overrides === "object" ? i.overrides : {},
+    overrides: typedTotals(i.overrides),
   };
 }
 

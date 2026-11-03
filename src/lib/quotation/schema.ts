@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { FONTS } from "./cell-format";
+import { MAX_COMMISSION, MIN_COMMISSION } from "./calc";
 import { HIDEABLE_COLUMNS, STANDARD_COLUMNS } from "./types";
 import { currencyCode, isoDate, optNum, optText, reqNum, reqText } from "../validation";
 
@@ -64,7 +65,7 @@ const quoteHeaderSchema = z
     currency: currencyCode,
     exchange_rate: reqNum(0.000001, 1_000_000),
     // The commission %: customer price = China price x (1 + commission).
-    margin_pct: reqNum(0, 500, 0),
+    margin_pct: reqNum(MIN_COMMISSION, MAX_COMMISSION, 0),
     pricing_basis: z.enum(["piece", "kg"]),
     rate_per_kg: optNum(0, 10_000_000),
     adjustments: z.array(adjustmentSchema).max(MAX_ADJUSTMENTS, `At most ${MAX_ADJUSTMENTS} bill lines`),
@@ -111,12 +112,11 @@ const quoteLineSchema = z.object({
   fmt: z
     .record(z.string().regex(/^(x:[a-z0-9]{1,24}|[a-z_]{2,20})$/i), cellFmtSchema)
     .refine((o) => Object.keys(o).length <= 40, "Too many formatted cells in one row"),
-  /** Total KG / Total Amount / Final Total typed over the calculation. */
+  /** Total KG / Total Amount typed over the calculation. */
   overrides: z
     .object({
       total_weight: z.number().min(0).max(100_000_000_000).optional(),
       amount: z.number().min(0).max(100_000_000_000).optional(),
-      net: z.number().min(0).max(100_000_000_000).optional(),
     })
     .strict()
     .optional(),

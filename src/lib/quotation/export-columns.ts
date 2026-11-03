@@ -1,6 +1,6 @@
 import { STANDARD_COLUMNS, type ExtraColumn, type QuoteDocument, type QuoteHeader, type QuoteLine, type StandardColumn } from "./types";
 
-export type ExportColumnKind = "index" | "text" | "qty" | "weight" | "money" | "totalWeight" | "amount" | "net";
+export type ExportColumnKind = "index" | "text" | "qty" | "weight" | "money" | "totalWeight" | "amount";
 
 export type ExportColumn = {
   key: string;
@@ -79,8 +79,8 @@ function extraValue(raw: string | undefined) {
 }
 
 /**
- * Columns in the Excel and PDF output, in the supplier-sheet order:
- * No. | Items | WT IN KGS | Actual Weight | RMB/PCS | QTY | Total KG | Total Amount | Note / Length | Final Total
+ * Columns in the Excel and PDF output, in the sheet's order:
+ * No. | Items | WT IN KGS | RMB/PCS | QTY | Total KG | Total Amount | Actual Weight | Note / Length
  * with the extra columns where they sit on the sheet: the file always matches the sheet
  * (columns deleted on the sheet are left out).
  */
@@ -100,7 +100,6 @@ export function exportColumns(doc: Pick<QuoteDocument, "company" | "header">): E
   cols.push({ key: "amount", header: "Total Amount", kind: "amount", width: 14, pdfWidth: 19, align: "right" });
   // Wide enough in the PDF for "CONCENTRIC, CS," on one line (narrower splits the word and makes rows tall).
   cols.push({ key: "remarks", header: "Note / Length", kind: "text", width: 16, pdfWidth: 24, align: "left", value: (l) => l.remarks || null });
-  cols.push({ key: "net", header: "Final Total", kind: "net", width: 15, pdfWidth: 19, align: "right" });
   const byKey = new Map(cols.map((c) => [c.key === "index" ? "idx" : c.key, c]));
   const shown: ExportColumn[] = [];
   for (const slot of sheetColumnOrder(header)) {

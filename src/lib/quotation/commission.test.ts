@@ -25,6 +25,14 @@ describe("commission: customer price = China price + commission % on top", () =>
     assert.equal(autoUnitPrice(line(5.7), pricing(commissionOfMultiplier(1.25))), 7.13);
   });
 
+  it("no upper limit: 25% and × 25 both work; below zero only down to a price of 0", () => {
+    assert.equal(autoUnitPrice(line(5.7), pricing(25)), 7.13);
+    assert.equal(commissionOfMultiplier(25), 2400);
+    assert.equal(autoUnitPrice(line(5.7), pricing(commissionOfMultiplier(25))), 142.5, "× 25");
+    assert.equal(autoUnitPrice(line(5.7), pricing(-10)), 5.13, "-10%");
+    assert.equal(autoUnitPrice(line(5.7), pricing(-150)), 0, "never below zero");
+  });
+
   it("a new commission re-prices every line except prices typed by hand", () => {
     const [auto, typed] = repriceLines([line(5.7), line(5.7, { unit_price: 7, price_overridden: true })], pricing(10));
     assert.equal(auto.unit_price, 6.27);

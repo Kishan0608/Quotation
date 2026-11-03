@@ -12,10 +12,12 @@ type Props = Omit<ComponentProps<"input">, "value" | "onChange" | "type"> & {
   max?: number;
   allowEmpty?: boolean;
   suffix?: string;
+  /** How the value is shown when the box isn't being typed in (e.g. 220,000); plain digits while typing. */
+  format?: (value: number) => string;
 };
 
 /** Number input that keeps the raw text while typing and commits a parsed number on blur / Enter. */
-export function NumInput({ value, onValueChange, min, max, allowEmpty = false, suffix, className, onBlur, onKeyDown, ...props }: Props) {
+export function NumInput({ value, onValueChange, min, max, allowEmpty = false, suffix, format, className, onBlur, onFocus, onKeyDown, ...props }: Props) {
   const [draft, setDraft] = useState<string | null>(null);
 
   const commit = (text: string) => {
@@ -36,7 +38,11 @@ export function NumInput({ value, onValueChange, min, max, allowEmpty = false, s
       <Input
         {...props}
         inputMode="decimal"
-        value={draft ?? (value == null ? "" : String(value))}
+        value={draft ?? (value == null ? "" : format ? format(value) : String(value))}
+        onFocus={(e) => {
+          if (format && value != null) setDraft(String(value));
+          onFocus?.(e);
+        }}
         onChange={(e) => setDraft(e.target.value)}
         onBlur={(e) => {
           commit(e.target.value);

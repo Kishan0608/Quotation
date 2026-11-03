@@ -38,7 +38,7 @@ type Props = {
 };
 
 /**
- * Lines are in RMB: Final total (RMB) -> x exchange rate -> amount in the quotation
+ * Lines are in RMB: Total amount (RMB) -> x exchange rate -> amount in the quotation
  * currency -> any number of discounts / charges / taxes -> grand total.
  */
 export function BillLines({ adjustments, totals, currency, baseCurrency, readOnly, onChange, onRateChange, onCurrencyChange, rateLoading }: Props) {
@@ -126,7 +126,7 @@ export function BillLines({ adjustments, totals, currency, baseCurrency, readOnl
         ) : null}
         {converts ? (
           <>
-            {row(`Final total (${base})`, fmtMoney(totals.baseSubtotal), true)}
+            {row(`Total amount (${base})`, fmtMoney(totals.baseSubtotal), true)}
             <div className="px-3 py-2">
               <p className="mb-1 text-xs text-slate-500">Exchange rate</p>
               <ExchangeRateInput key={currency} from={baseCurrency} to={currency} rate={totals.exchangeRate} readOnly={readOnly || rateLoading} onChange={onRateChange} />

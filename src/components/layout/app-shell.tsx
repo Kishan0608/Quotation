@@ -3,6 +3,7 @@
 import {
   Boxes,
   Building2,
+  Calculator,
   FileSpreadsheet,
   FileText,
   LayoutDashboard,
@@ -28,6 +29,7 @@ const MAIN_NAV: NavItem[] = [
   { href: "/customers", label: "Customers", icon: Users },
   { href: "/inventory", label: "Inventory", icon: Boxes },
   { href: "/sizes", label: "Pipe size chart", icon: Ruler },
+  { href: "/calculator", label: "Calculator", icon: Calculator },
   { href: "/settings", label: "Company settings", icon: Building2 },
 ];
 

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import ExcelJS from "exceljs";
 import { blankLine } from "@/components/quotation/line-utils";
-import { computeTotals, isBlankLine, lineAmount, lineNet, lineWeight } from "./calc";
+import { computeTotals, isBlankLine, lineAmount, lineWeight, typedTotals } from "./calc";
 import { buildQuotationWorkbook } from "./export-excel";
 import type { CompanyInfo, QuoteHeader, QuoteLine } from "./types";
 
@@ -11,24 +11,27 @@ const header = { adjustments: [], exchange_rate: 12 } as Pick<QuoteHeader, "adju
 const fullHeader = { adjustments: [], exchange_rate: 12, currency: "INR", sheet_names: ["Quotation"], extra_columns: [], hidden_columns: [], column_titles: {}, customer_name: "Test", notes: "", terms: "" } as unknown as QuoteHeader;
 const company = { company_name: "Co", base_currency: "CNY", signature_image: null } as unknown as CompanyInfo;
 
-describe("values typed over Total KG / Total Amount / Final Total", () => {
+describe("values typed over Total KG / Total Amount", () => {
   it("replace the calculation; without them it is calculated", () => {
     const calc = line({});
     assert.equal(lineWeight(calc), 9);
     assert.equal(lineAmount(calc), 50);
-    assert.equal(lineNet(calc), 50);
     const typed = line({ overrides: { total_weight: 8.5, amount: 48 } });
     assert.equal(lineWeight(typed), 8.5);
     assert.equal(lineAmount(typed), 48);
-    assert.equal(lineNet(typed), 48, "Final Total follows a typed Total Amount");
-    assert.equal(lineNet(line({ overrides: { amount: 48, net: 45 } })), 45);
+  });
+
+  it("a Final Total typed before that column was removed no longer counts", () => {
+    const old = { total_weight: 8, amount: 45, net: 40 };
+    assert.deepEqual(typedTotals(old), { total_weight: 8, amount: 45 });
+    assert.deepEqual(typedTotals(null), {});
   });
 
   it("count in the quotation totals", () => {
-    const t = computeTotals([line({ overrides: { net: 45, total_weight: 8 } }), line({})], header);
+    const t = computeTotals([line({ overrides: { amount: 45, total_weight: 8 } }), line({})], header);
     assert.equal(t.totalWeight, 17);
-    assert.equal(t.grossAmount, 100);
-    assert.equal(t.baseSubtotal, 95);
+    assert.equal(t.grossAmount, 95);
+    assert.equal(t.baseSubtotal, 95, "the money total is the Total Amount");
     assert.equal(t.subtotal, 1140);
   });
 
@@ -46,6 +49,8 @@ describe("values typed over Total KG / Total Amount / Final Total", () => {
     const values: unknown[] = [];
     ws.eachRow((row) => row.eachCell((cell) => values.push(cell.value)));
     assert.ok(values.includes(48), "the typed Total Amount is a plain value");
+    assert.ok(!values.includes("Final Total"), "no Final Total column");
+    assert.ok(values.includes("Total Amount"));
   });
 });
 

@@ -7,7 +7,6 @@ import {
   computeTotals,
   currencyLabel,
   lineAmount,
-  lineNet,
   lineWeight,
 } from "./calc";
 import type { CellFmt, QuoteDocument } from "./types";
@@ -143,7 +142,7 @@ function addQuotationSheets(wb: Workbook, doc: QuoteDocument, used: Set<string>)
     header.sheet_names?.length ? header.sheet_names : ["Quotation"],
     used,
   );
-  const netRefs: { ref: string; result: number }[] = []; // each sheet's Final Total (TOTAL row)
+  const netRefs: { ref: string; result: number }[] = []; // each sheet's Total Amount (TOTAL row)
 
   for (let si = 0; si < sheetNames.length; si++) {
     const isLastSheet = si === sheetNames.length - 1;
@@ -323,7 +322,6 @@ function addQuotationSheets(wb: Workbook, doc: QuoteDocument, used: Set<string>)
     const qtyCol = letterOf("qty");
     const uwCol = letterOf("unit_weight_kg");
     const priceCol = letterOf("unit_price");
-    const amountColL = letterOf("amount");
     const ref = (col: string | null, row: number, value: number) =>
       col ? `${col}${row}` : String(value);
     const firstItemRow = r;
@@ -348,13 +346,6 @@ function addQuotationSheets(wb: Workbook, doc: QuoteDocument, used: Set<string>)
             cell.value = line.overrides?.amount != null ? line.overrides.amount : {
               formula: `ROUND(${ref(qtyCol, r, line.qty ?? 0)}*${ref(priceCol, r, line.unit_price ?? 0)},2)`,
               result: lineAmount(line),
-            };
-            cell.numFmt = "#,##0.00";
-            break;
-          case "net": // Final Total = Total Amount
-            cell.value = line.overrides?.net != null ? line.overrides.net : {
-              formula: ref(amountColL, r, lineAmount(line)),
-              result: lineNet(line),
             };
             cell.numFmt = "#,##0.00";
             break;
@@ -417,9 +408,8 @@ function addQuotationSheets(wb: Workbook, doc: QuoteDocument, used: Set<string>)
         cell.value = { formula: sum(letter), result: sheetTotals.totalWeight };
         cell.numFmt = "#,##0.000";
       }
-      if (c.kind === "amount" || c.kind === "net") {
-        const result = c.kind === "amount" ? sheetTotals.grossAmount : sheetTotals.baseSubtotal;
-        cell.value = { formula: sum(letter), result };
+      if (c.kind === "amount") {
+        cell.value = { formula: sum(letter), result: sheetTotals.grossAmount };
         cell.numFmt = "#,##0.00";
       }
       style(
@@ -433,7 +423,7 @@ function addQuotationSheets(wb: Workbook, doc: QuoteDocument, used: Set<string>)
     ws.getRow(r).height = 20;
     r += 2;
     netRefs.push({
-      ref: `'${sheetNames[si].replace(/'/g, "''")}'!${colLetter(colIndex("net"))}${totalRow}`,
+      ref: `'${sheetNames[si].replace(/'/g, "''")}'!${colLetter(colIndex("amount"))}${totalRow}`,
       result: sheetTotals.baseSubtotal,
     });
 
@@ -443,8 +433,8 @@ function addQuotationSheets(wb: Workbook, doc: QuoteDocument, used: Set<string>)
       continue;
     }
 
-    // ---- Summary block (right aligned under the Final Total column) ---------
-    const amountIdx = colIndex("net");
+    // ---- Summary block (right aligned under the Total Amount column) --------
+    const amountIdx = colIndex("amount");
     const amountCol = colLetter(amountIdx);
     const labelFrom = Math.max(1, amountIdx - 3);
     type SummaryLine = {
@@ -466,7 +456,7 @@ function addQuotationSheets(wb: Workbook, doc: QuoteDocument, used: Set<string>)
     let subtotalRef = allSheetsNet;
     if (converts) {
       pre.push({
-        label: `Final total (${base})`,
+        label: `Total amount (${base})`,
         formula: allSheetsNet,
         result: totals.baseSubtotal,
       });

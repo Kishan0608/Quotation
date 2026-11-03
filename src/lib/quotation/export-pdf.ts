@@ -9,7 +9,6 @@ import {
   computeTotals,
   currencyLabel,
   lineAmount,
-  lineNet,
   lineWeight,
 } from "./calc";
 import type { CellFmt, QuoteDocument } from "./types";
@@ -269,8 +268,6 @@ export async function buildQuotationPdf(
             return fmtWeight(lineWeight(line));
           case "amount":
             return fmtMoney(lineAmount(line));
-          case "net":
-            return fmtMoney(lineNet(line));
           default:
             return pdfSafe(String(c.value?.(line) ?? ""));
         }
@@ -292,7 +289,6 @@ export async function buildQuotationPdf(
         if (c.key === "qty") return fmtQty(sheetTotals.totalQty);
         if (c.kind === "totalWeight") return fmtWeight(sheetTotals.totalWeight);
         if (c.kind === "amount") return fmtMoney(sheetTotals.grossAmount);
-        if (c.kind === "net") return fmtMoney(sheetTotals.baseSubtotal);
         return "";
       }),
     ];
@@ -346,7 +342,7 @@ export async function buildQuotationPdf(
   const summary: [string, string, boolean][] =
     header.currency !== company.base_currency
       ? [
-          [`Final total (${base})`, fmtMoney(totals.baseSubtotal), false],
+          [`Total amount (${base})`, fmtMoney(totals.baseSubtotal), false],
           [
             `Exchange rate (1 ${base})`,
             `${totals.exchangeRate} ${quote}`,

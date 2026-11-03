@@ -54,7 +54,6 @@ import {
   calcWeight,
   isBlankLine,
   lineAmount,
-  lineNet,
   lineWeight,
 } from "@/lib/quotation/calc";
 import {
@@ -101,8 +100,7 @@ type BuiltinId =
   | "qty"
   | "total_weight"
   | "amount"
-  | "remarks"
-  | "net";
+  | "remarks";
 
 type Col = {
   /** Built-in id, or `x:<key>` for an extra column. */
@@ -148,7 +146,6 @@ function columns(currency: string): Col[] {
     b("total_weight", "Total KG", 104, "computed", "right"),
     b("amount", "Total Amount", 124, "computed", "right"),
     b("remarks", "Note / Length", 130, "text", "left"),
-    b("net", "Final Total", 128, "computed", "right"),
   ];
 }
 
@@ -169,7 +166,6 @@ function totalFor(id: string, totals: QuoteTotals): number | null {
   if (id === "qty") return totals.totalQty;
   if (id === "total_weight") return totals.totalWeight;
   if (id === "amount") return totals.grossAmount;
-  if (id === "net") return totals.baseSubtotal;
   return null;
 }
 
@@ -186,8 +182,6 @@ function rawValue(line: QuoteLine, col: Col): string {
       return String(lineWeight(line));
     case "amount":
       return String(lineAmount(line));
-    case "net":
-      return String(lineNet(line));
     case "description":
     case "actual_weight":
     case "remarks":
@@ -211,10 +205,6 @@ function displayValue(line: QuoteLine, col: Col): string {
       return line.qty == null && line.unit_price == null && line.overrides?.amount == null
         ? ""
         : fmtMoney(lineAmount(line));
-    case "net":
-      return line.qty == null && line.unit_price == null && line.overrides?.net == null && line.overrides?.amount == null
-        ? ""
-        : fmtMoney(lineNet(line));
     default:
       return rawValue(line, col);
   }
@@ -230,10 +220,9 @@ function formulaFor(
     const l = letterOf(src);
     return l ? `${l}${row}` : null;
   };
-  const [qty, wt, price, amount] = [ref("qty"), ref("unit_weight_kg"), ref("unit_price"), ref("amount")];
+  const [qty, wt, price] = [ref("qty"), ref("unit_weight_kg"), ref("unit_price")];
   if (id === "total_weight") return qty && wt ? `=${qty}*${wt}` : null;
   if (id === "amount") return qty && price ? `=ROUND(${qty}*${price},2)` : null;
-  if (id === "net") return amount ? `=${amount}` : null;
   return null;
 }
 
@@ -282,12 +271,11 @@ function applyEdit(
       }
       // Typed over the calculation (Excel: a value replaces the formula); empty = calculate again.
       case "total_weight":
-      case "amount":
-      case "net": {
+      case "amount": {
         const key = col.builtin;
         const n = num();
         const overrides = { ...line.overrides };
-        const calculated = key === "total_weight" ? calcWeight(line) : key === "amount" ? calcAmount(line) : lineAmount(line);
+        const calculated = key === "total_weight" ? calcWeight(line) : calcAmount(line);
         const value = n == null ? null : key === "total_weight" ? round3(n) : round2(n);
         if (value == null || value === calculated) delete overrides[key];
         else overrides[key] = value;
@@ -351,7 +339,7 @@ type Props = {
   activeSheet: number;
   onSelectSheet: (i: number) => void;
   onAddSheet: () => void;
-  /** Total KG / Total Amount / Final Total can't be typed over (the China sheet). */
+  /** Total KG / Total Amount can't be typed over (the China sheet). */
   lockTotals?: boolean;
   onRenameSheet: (i: number, name: string) => void;
   onDeleteSheet: (i: number) => void;
@@ -653,7 +641,7 @@ export function SheetGrid({
     return cellRaw(cursor.r, cursor.c);
   })();
 
-  // Every cell but the row numbers: Total KG / Total Amount / Final Total take a typed value too.
+  // Every cell but the row numbers: Total KG / Total Amount take a typed value too.
   const isEditableCol = (c: number) => cols[c].kind !== "index" && !(lockTotals && cols[c].kind === "computed");
   const isEditable = (r: number, c: number) =>
     !readOnly && r !== totalRowIndex && isEditableCol(c);
@@ -1031,7 +1019,7 @@ export function SheetGrid({
 
   /**
    * Column operations. Extra columns are really inserted/removed; the standard columns
-   * (No., Items and Final Total excepted) are hidden on this quotation, so the totals keep working.
+   * (No., Items and Total Amount excepted) are hidden on this quotation, so the totals keep working.
    */
   const colOp = (op: "left" | "right" | "delete" | "showAll") => {
     if (readOnly) return;
@@ -1101,7 +1089,7 @@ export function SheetGrid({
     if (!remove.size && !hide.length) {
       toast.info(
         picked.some((c) => c.builtin)
-          ? "The No., Items and Final Total columns can't be deleted."
+          ? "The No., Items and Total Amount columns can't be deleted."
           : "These columns are empty.",
       );
       return;
@@ -2781,7 +2769,7 @@ const SheetRow = memo(function SheetRow({
             onContextMenu={(e) => h.current.context(r, c, e)}
             title={
               typedTotal && line
-                ? `Typed value (calculated: ${col.id === "total_weight" ? fmtWeight(calcWeight(line)) : fmtMoney(col.id === "amount" ? calcAmount(line) : lineAmount({ ...line, overrides: { amount: line.overrides?.amount } }))}). Clear the cell to calculate it again.`
+                ? `Typed value (calculated: ${col.id === "total_weight" ? fmtWeight(calcWeight(line)) : fmtMoney(calcAmount(line))}). Clear the cell to calculate it again.`
                 : overridden
                   ? `Manual price${autoPrice != null ? ` (automatic: ${fmtMoney(autoPrice)})` : ""}`
                   : undefined

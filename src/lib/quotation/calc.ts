@@ -1,13 +1,17 @@
 import { round2, round3, roundTo } from "../format";
-import type { Adjustment, AdjustmentKind, QuoteHeader, QuoteLine, QuoteTotals } from "./types";
+import type { Adjustment, AdjustmentKind, LineOverrides, QuoteHeader, QuoteLine, QuoteTotals } from "./types";
 
 type PricingInputs = Pick<QuoteHeader, "pricing_basis" | "rate_per_kg" | "margin_pct">;
 
 /** "RMB" for CNY (as written on the supplier sheets), otherwise the ISO code. */
 export const currencyLabel = (code: string) => (code === "CNY" ? "RMB" : code);
 
-/** The highest commission % a quotation takes. */
-export const MAX_COMMISSION = 500;
+/**
+ * The commission takes any value (the user's wish, 2026-11-02): from -100% (x 0, a price can't go
+ * below zero) up to what the database column holds (numeric(7,2): 99,999.99%, x 1,001).
+ */
+export const MIN_COMMISSION = -100;
+export const MAX_COMMISSION = 99_999.99;
 
 /**
  * Automatic customer price for one line, in RMB (the company base currency):
@@ -25,7 +29,7 @@ export function autoUnitPrice(line: Pick<QuoteLine, "base_price" | "unit_weight_
     base = line.base_price;
   }
   if (base == null) return null;
-  const commission = Math.min(Math.max(pricing.margin_pct || 0, 0), MAX_COMMISSION) / 100;
+  const commission = Math.min(Math.max(pricing.margin_pct || 0, MIN_COMMISSION), MAX_COMMISSION) / 100;
   return round2(base * (1 + commission));
 }
 
@@ -51,16 +55,25 @@ export const calcAmount = (line: Pick<QuoteLine, "qty" | "unit_price">) => round
 export const calcWeight = (line: Pick<QuoteLine, "qty" | "unit_weight_kg">) => round3((line.qty ?? 0) * (line.unit_weight_kg ?? 0));
 
 export const lineAmount = (line: Pick<QuoteLine, "qty" | "unit_price" | "overrides">) => line.overrides?.amount ?? calcAmount(line);
-/** Final Total of a line = its Total Amount, unless a Final Total was typed. */
-export const lineNet = (line: Pick<QuoteLine, "qty" | "unit_price" | "overrides">) => line.overrides?.net ?? lineAmount(line);
 export const lineWeight = (line: Pick<QuoteLine, "qty" | "unit_weight_kg" | "overrides">) => line.overrides?.total_weight ?? calcWeight(line);
+
+/** The typed totals a line may have (a Final Total typed before that column was removed is dropped). */
+export function typedTotals(raw: unknown): LineOverrides {
+  const o = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
+  const out: LineOverrides = {};
+  for (const key of ["total_weight", "amount"] as const) {
+    const v = o[key];
+    if (typeof v === "number" && Number.isFinite(v)) out[key] = v;
+  }
+  return out;
+}
 
 /** Same arithmetic and rounding as public.save_quotation() in the database. */
 const KIND_ORDER: Record<AdjustmentKind, number> = { discount: 0, charge: 1, tax: 2 };
 
 /**
  * Same arithmetic and rounding as public.save_quotation() in the database:
- * Final Total of every line (RMB) -> x exchange rate = subtotal in the quotation currency
+ * Total Amount of every line (RMB) -> x exchange rate = subtotal in the quotation currency
  * -> discounts and charges (% of subtotal) -> taxes (% of the taxable amount).
  */
 export function computeTotals(lines: QuoteLine[], header: Pick<QuoteHeader, "adjustments" | "exchange_rate">): QuoteTotals {
@@ -74,7 +87,7 @@ export function computeTotals(lines: QuoteLine[], header: Pick<QuoteHeader, "adj
     totalWeight += lineWeight(line);
     totalPrice += line.unit_price ?? 0;
     grossAmount += lineAmount(line);
-    subtotal += lineNet(line);
+    subtotal += lineAmount(line);
   }
   grossAmount = round2(grossAmount);
   const baseSubtotal = round2(subtotal);
