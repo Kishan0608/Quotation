@@ -61,26 +61,59 @@ function sizeInside(text: string) {
   return mm ? pipeSize(`${mm[1]}X${mm[2]}MM`) : null;
 }
 
-/** Where a line goes: compared number by number; a line that names no fitting keeps its place (`index`). */
-function placeOf(line: QuoteLine, index: number): number[] {
+/** What a line's name says: the cleaned text, the kind it names and its size. */
+function readLine(line: Pick<QuoteLine, "description" | "remarks">) {
   // "D323 .9X36 .5" (a supplier's spacing) is 323.9 x 36.5.
   const read = orderText(line.description.replace(/(\d)\s+\.\s*(?=\d)/g, "$1."));
   // An angle is not a size: "90° Elbow LR 30"X8 mm" is a 30" elbow.
   const text = read.text.replace(/\d+\s*°/g, " ");
   const named = kindNamed(read.text, line.remarks);
-  const size = sizeAtStart(text) ?? (named ? sizeInside(text) : null);
+  return { read, named, size: sizeAtStart(text) ?? (named ? sizeInside(text) : null) };
+}
+
+const inchesOf = (size: NonNullable<ReturnType<typeof readLine>["size"]>) =>
+  size.key.endsWith('"') ? Number(size.key.slice(0, -1)) : (size.od ?? Infinity) / 25.4;
+
+/** A line's kind, wall block (B / C class = 0, see SCHEDULE_BLOCK) and size, as the order and the search read them. */
+function classify(line: Pick<QuoteLine, "description" | "remarks">) {
+  const { read, named, size } = readLine(line);
   // A size with no kind word is a 90° elbow, as the inventory names them.
   const kind = named ?? (size ? "ELBOW" : null);
+  const letter = `${read.classNote} ${line.remarks} ${line.description}`.match(CLASS_LETTER);
+  // A reducer's wall in mm comes after both sizes: 3"X11/2"X4MM.
+  const laterWall = size && size.family == null ? size.rest.match(/X(\d+(?:\.\d+)?)(?:\/\d+(?:\.\d+)?)?MM/) : null;
+  const block = size?.family === "mm" || laterWall ? 0 : size?.code ? (SCHEDULE_BLOCK[size.code] ?? NO_WALL) : letter ? 0 : NO_WALL;
+  return { read, size, kind, letter, laterWall, block };
+}
+
+/** Wall groups for the search: B / C class (wall in mm), SCH40 with STD, SCH80 with XS, other schedules. */
+export type WallGroup = "class" | "sch40" | "sch80" | "other";
+
+/**
+ * What the search filters on: the kind (as KIND_ORDER names it; every bend is "BEND"), the wall
+ * group, and the size in inches (33X2.5MM = 1, 4"X3" REDUCER = 4) and as outside diameter in mm.
+ */
+export function lineFacts(line: Pick<QuoteLine, "description" | "remarks">) {
+  const { size, kind, block } = classify(line);
+  const inches = size ? inchesOf(size) : Infinity;
+  const wall: WallGroup | null = !kind || block === NO_WALL ? null : block === 0 ? "class" : block === SCHEDULE_BLOCK["40"] ? "sch40" : block === SCHEDULE_BLOCK["80"] ? "sch80" : "other";
+  return {
+    kind: kind && /^\dD BEND$/.test(kind) ? "BEND" : kind,
+    wall,
+    inches: Number.isFinite(inches) ? inches : null,
+    od: size?.od ?? null,
+  };
+}
+
+/** Where a line goes: compared number by number; a line that names no fitting keeps its place (`index`). */
+function placeOf(line: QuoteLine, index: number): number[] {
+  const { read, size, kind, letter, laterWall, block } = classify(line);
   if (!kind) return [UNKNOWN, index];
 
   const radius = kind.match(/^(\d)D BEND$/);
   const at = KIND_ORDER.indexOf(radius ? "BEND" : kind);
   const centric = at === REDUCER ? ["ECCENTRIC", "CONCENTRIC"].indexOf(read.centric || centricOf(line.remarks) || centricOf(line.description) || "") : 0;
-  const letter = `${read.classNote} ${line.remarks} ${line.description}`.match(CLASS_LETTER);
-  // A reducer's wall in mm comes after both sizes: 3"X11/2"X4MM.
-  const laterWall = size && size.family == null ? size.rest.match(/X(\d+(?:\.\d+)?)(?:\/\d+(?:\.\d+)?)?MM/) : null;
-  const block = size?.family === "mm" || laterWall ? 0 : size?.code ? (SCHEDULE_BLOCK[size.code] ?? NO_WALL) : letter ? 0 : NO_WALL;
-  const nominal = !size ? Infinity : size.key.endsWith('"') ? Number(size.key.slice(0, -1)) : (size.od ?? Infinity) / 25.4;
+  const nominal = !size ? Infinity : inchesOf(size);
   // Equal tees first, then the branch (a reducer's small end) from large to small, as in B16.9.
   const second = size?.rest.match(/^X(\d*\d\/\d|\d+(?:\.\d+)?)"/);
   const branch = (second ? parseNpsValue(second[1]) : null) ?? nominal;

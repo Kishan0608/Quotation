@@ -581,9 +581,10 @@ export function SheetGrid({
       ? grid?.querySelector<HTMLElement>(`[data-cell="${followKey}"]`)
       : null;
     if (!grid || !el) return;
+    // A jump from the search above the sheet scrolls even when it is the first move.
     if (!selectionTouched.current) {
       selectionTouched.current = true;
-      return;
+      if (!seenJump) return;
     }
     const g = grid.getBoundingClientRect();
     const c = el.getBoundingClientRect();
@@ -594,7 +595,7 @@ export function SheetGrid({
     if (c.left < g.left + ROW_HEADER_W)
       grid.scrollLeft -= g.left + ROW_HEADER_W - c.left;
     else if (c.right > g.right) grid.scrollLeft += c.right - g.right;
-  }, [followKey]);
+  }, [followKey, seenJump]);
 
   const focusGrid = () => gridRef.current?.focus({ preventScroll: true });
   /** The fx bar: typing there edits the selected cell, like Excel's formula bar. */

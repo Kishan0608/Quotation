@@ -12,6 +12,7 @@ import { ConfirmDialog } from "@/components/ui/dialog";
 import { Field, Input, Textarea } from "@/components/ui/field";
 import { fmtDateTime, parseNumber, round2 } from "@/lib/format";
 import type { CustomerPick } from "@/lib/customers/schema";
+import type { PickerItem } from "@/lib/inventory/types";
 import { cn } from "@/lib/cn";
 import { autoUnitPrice, commissionOfMultiplier, computeTotals, currencyLabel, isBlankLine, MAX_COMMISSION, MIN_COMMISSION, multiplierOf, repriceLines, typedTotals } from "@/lib/quotation/calc";
 import { chinaLine } from "@/lib/quotation/china-document";
@@ -25,6 +26,7 @@ import { BillLines } from "./bill-lines";
 import { CustomerPicker } from "./customer-picker";
 import { fetchLiveRate } from "./exchange-rate";
 import { blankLine, lineFromItem } from "./line-utils";
+import { LineSearchBar } from "./line-search-bar";
 import { SheetGrid } from "./sheet-grid";
 import { useInventoryChanges } from "./use-inventory-changes";
 
@@ -131,7 +133,10 @@ export function QuotationBuilder(props: BuilderProps) {
   useEffect(() => {
     live.current = { lines, header };
   });
+  const [inventoryVersion, setInventoryVersion] = useState(0);
   useInventoryChanges(!readOnly, (items) => {
+    // The search above the sheet loads the inventory again.
+    setInventoryVersion((v) => v + 1);
     const r = applyInventoryChanges(live.current.lines, items, live.current.header);
     if (!r.updated && !r.linked) return;
     live.current.lines = r.lines;
@@ -269,6 +274,44 @@ export function QuotationBuilder(props: BuilderProps) {
     else if (multiply) toast.success(`Customer prices updated: China price × ${multiplierOf(value)}.`);
     else toast.success(`Commission ${value}%: customer prices updated (China price ${value < 0 ? "−" : "+"} ${Math.abs(value)}%).`);
   };
+
+  // A line picked in the search list: selected on the sheet and flashed for a moment.
+  const [jump, setJump] = useState<{ row: number } | null>(null);
+  const [flashKey, setFlashKey] = useState<string | null>(null);
+  const goToRow = (row: number, key: string) => {
+    setJump({ row });
+    setFlashKey(key);
+  };
+
+  /**
+   * Inventory items picked in the search: added after the last filled row of this sheet (an item
+   * already on it is skipped), at today's price; the quantity is typed on the sheet.
+   */
+  const addFromInventory = (items: PickerItem[]) => {
+    const onSheet = new Set(sheetLines.map((l) => l.inventory_item_id).filter(Boolean));
+    const fresh = items.filter((i) => !onSheet.has(i.id));
+    if (!fresh.length) {
+      toast.info("Already on the sheet.");
+      return;
+    }
+    const rows = sheetLines.slice();
+    const first = rows.reduce((last, r, i) => (isBlankLine(r) ? last : i), -1) + 1;
+    fresh.forEach((item, n) => {
+      const line: QuoteLine = { ...lineFromItem(item, 1, header, sheetIndex), qty: null };
+      const at = first + n;
+      if (at < rows.length && isBlankLine(rows[at])) rows[at] = { ...line, fmt: rows[at].fmt };
+      else rows.splice(at, 0, line);
+    });
+    commitSheetLines(rows);
+    goToRow(first, rows[first].key);
+    const skipped = items.length - fresh.length;
+    toast.success(`${fresh.length} item${fresh.length === 1 ? "" : "s"} added${skipped ? ` (${skipped} already on the sheet)` : ""}. Type the quantities on the sheet.`);
+  };
+  useEffect(() => {
+    if (!flashKey) return;
+    const t = setTimeout(() => setFlashKey(null), 1600);
+    return () => clearTimeout(t);
+  }, [flashKey]);
 
   /** The tabs: China first, then the quotation's sheets (the first one named after the customer). */
   const tabNames = ["China", ...header.sheet_names];
@@ -605,47 +648,60 @@ export function QuotationBuilder(props: BuilderProps) {
 
       {/* The sheet: items are added by typing in the Items cell (inventory suggestions) or by Import */}
       <section id="step-sheet" className="mt-4 scroll-mt-40">
-        {/* Commission: the customer's prices are the China prices plus this commission. */}
-        {!readOnly ? (
-          <div className="mb-2 flex flex-wrap items-center gap-2 text-sm">
-            <label htmlFor="q-commission" className="font-medium text-slate-700">
-              Commission
-            </label>
-            <input
-              id="q-commission"
-              inputMode="decimal"
-              value={commissionDraft}
-              placeholder={multiply ? "1" : "0"}
-              onChange={(e) => setCommissionDraft(e.target.value)}
-              onBlur={applyCommission}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  e.preventDefault();
-                  applyCommission();
-                }
-              }}
-              className="num h-8 w-24 rounded-md border border-slate-300 bg-white px-2.5 text-right outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100"
-            />
-            <div className="flex rounded-lg border border-slate-300 bg-white p-0.5" role="radiogroup" aria-label="Commission as">
-              {(["percent", "multiply"] as const).map((m) => (
-                <button
-                  key={m}
-                  type="button"
-                  role="radio"
-                  aria-checked={(m === "multiply") === multiply}
-                  title={m === "percent" ? "Percentage: China price + %" : "Multiply: China price × number"}
-                  // Switching keeps the commission (shown the other way); a number not yet entered is dropped.
-                  onMouseDown={(e) => e.preventDefault()}
-                  onClick={() => writeLocalStorage(COMMISSION_MODE_KEY, m === "multiply" ? "multiply" : null)}
-                  className={cn("h-6.5 w-8 rounded-md font-medium", (m === "multiply") === multiply ? "bg-brand-600 text-white" : "text-slate-600 hover:bg-slate-100")}
-                >
-                  {m === "percent" ? "%" : "×"}
-                </button>
-              ))}
-            </div>
-          </div>
-        ) : null}
+        {/* Commission (left): the customer's prices are the China prices plus this commission.
+            Search and range (right): lists the matching lines; clicking one selects it on the sheet. */}
+        <LineSearchBar
+          lines={sheetLines}
+          header={header}
+          inventoryVersion={inventoryVersion}
+          readOnly={readOnly}
+          onPick={goToRow}
+          onAdd={addFromInventory}
+          left={
+            !readOnly ? (
+              <div className="flex flex-wrap items-center gap-2">
+                <label htmlFor="q-commission" className="font-medium text-slate-700">
+                  Commission
+                </label>
+                <input
+                  id="q-commission"
+                  inputMode="decimal"
+                  value={commissionDraft}
+                  placeholder={multiply ? "1" : "0"}
+                  onChange={(e) => setCommissionDraft(e.target.value)}
+                  onBlur={applyCommission}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      applyCommission();
+                    }
+                  }}
+                  className="num h-8 w-24 rounded-md border border-slate-300 bg-white px-2.5 text-right outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100"
+                />
+                <div className="flex rounded-lg border border-slate-300 bg-white p-0.5" role="radiogroup" aria-label="Commission as">
+                  {(["percent", "multiply"] as const).map((m) => (
+                    <button
+                      key={m}
+                      type="button"
+                      role="radio"
+                      aria-checked={(m === "multiply") === multiply}
+                      title={m === "percent" ? "Percentage: China price + %" : "Multiply: China price × number"}
+                      // Switching keeps the commission (shown the other way); a number not yet entered is dropped.
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={() => writeLocalStorage(COMMISSION_MODE_KEY, m === "multiply" ? "multiply" : null)}
+                      className={cn("h-6.5 w-8 rounded-md font-medium", (m === "multiply") === multiply ? "bg-brand-600 text-white" : "text-slate-600 hover:bg-slate-100")}
+                    >
+                      {m === "percent" ? "%" : "×"}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : null
+          }
+        />
         <SheetGrid
+          jumpTo={jump}
+          highlightKey={flashKey}
           key={chinaView ? "china" : sheetIndex}
           baseCurrency={company.base_currency}
           lines={chinaView ? chinaLines : sheetLines}
